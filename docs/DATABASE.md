@@ -56,3 +56,22 @@ ORDER BY c.collected_at;
 
 
 진단 열 추가는 기존 행을 삭제하거나 재작성하지 않는 `ALTER TABLE ... ADD COLUMN` 방식입니다. 진단의 필드 경로는 정적 공식 필드명과 행 인덱스로만 구성하며 실제 종목 데이터/요청 본문/헤더는 출력하지 않습니다. 상세 검증 실패에도 `response_json`에 실패한 시장 데이터 원문을 임의 저장하지 않습니다. 실패 이유는 `error`, 안전한 구조 요약은 `diagnostic_json`으로 확인하세요.
+
+
+## 종목 마스터 및 섹터 분류 스키마
+
+- `stocks`: `stock_code TEXT PRIMARY KEY`(ASCII 숫자 6자리 CHECK), `stock_name TEXT`, `updated_at`(KST). 코드를 정수로 변환하지 않습니다.
+- `sectors`: `sector_id INTEGER PRIMARY KEY`, `sector_name TEXT UNIQUE`, `created_at`(KST).
+- `stock_sectors`: `stock_code`→`stocks`, `sector_id`→`sectors` 외래 키, 복합 기본 키로 다대다 중복 연결 방지. `source`, `created_at`, `updated_at` 기록.
+- `stock_sector_events`: 연결/출처 수정은 `action='tag'`, 해제는 `action='untag'`로 감사 이력을 추가합니다. `stock_code`, `sector_id`, `source`, `changed_at` 보존. 같은 출처의 동일 연결 요청이나 이미 없는 연결 해제는 감사 이력을 불필요하게 늘리지 않습니다.
+- `schema_migrations`: `name` 기본 키와 `applied_at`. `stock_master_v1`의 기존 성공 관측 기반 초기화는 한 번만 실행합니다.
+
+새 스키마·초기 종목 채우기·마이그레이션 마커는 하나의 트랜잭션입니다. 오류 시 롤백하고 다음 실행에서 재시도합니다. 이력 테이블은 재작성·삭제하지 않고 `ranking_records`에도 새 외래 키를 강제 추가하지 않습니다. 기존 데이터 중 코드/이름이 없거나 지원 형식 밖이면 원본 관측을 유지하고 마스터 등록만 건너뜁니다. 초기 이름은 `collections.collected_at`, 동률일 때 회차 rowid 순으로 마지막 유효 관측의 이름을 사용합니다. 테스트 모드 성공 관측도 실제 반환된 종목이면 포함됩니다. 자동 태그 추론이나 외부 사이트 조회는 없습니다.
+
+새 수집 결과의 종목 마스터 갱신은 순위 기록·회차 완료와 같은 트랜잭션입니다. 저장 실패 시 마스터 변경도 함께 롤백합니다. 종목명이 바뀌어도 과거 `ranking_records.stk_nm`·`raw_json`은 그대로 유지합니다. `stocks.updated_at`은 마스터 최초 등록/이름 변경 처리 시각이며, 개별 관측 시각은 `collections`에서 조회하세요.
+
+현재 태그의 출처가 변경되면 `stock_sectors.created_at`은 유지하고 `updated_at`과 `source`만 갱신합니다. 이전 출처는 감사 이력에 남습니다. `untag`는 연결만 제거하고 종목·섹터·관측·감사 이력은 삭제하지 않습니다. 외래 키 기본 RESTRICT 동작으로 연결 또는 감사 기록에 참조된 종목·섹터의 임의 삭제를 막습니다.
+
+CSV는 UTF-8/BOM, 정확한 두 열 `stock_code,sector_name`(열 순서 변경 허용)을 받습니다. 앞뒤 공백을 제거한 후 코드를 6자리 ASCII 숫자 텍스트로 검증하고 마스터 존재 여부를 확인합니다. 같은 파일의 중복 종목-섹터 쌍은 오류입니다. 다른 섹터를 같은 종목에 여러 개 지정할 수 있습니다. 전체 검증과 적용은 쓰기 예약 트랜잭션에서 실행하므로 검증 후 다른 프로세스가 바꾸는 경합을 줄입니다. `--dry-run`은 태그를 저장하지 않지만 시작 시 공통 마이그레이션은 수행합니다. 원본 파일이나 인증정보는 DB에 보관하지 않습니다.
+
+분석에서 종목별 현재 태그를 연결하려면 `ranking_records.stk_cd = stocks.stock_code`, 이어서 `stock_sectors`와 `sectors`를 조인하면 됩니다. 현재 태그와 과거 시점의 태그는 다르므로 과거 분류를 재현할 때는 감사 이력을 사용해야 합니다. 섹터 점수/매매 신호는 이번 변경에 없습니다.

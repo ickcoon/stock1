@@ -243,3 +243,149 @@ py -3 -m venv .venv
 **장외 응답:** 조사한 공식 명세에는 장외에만 별도 형식을 반환한다는 보장이 없습니다. `item_inq_rank=[]` 또는 선택 목록 누락은 기존 `once`처럼 빈 결과로 처리합니다. 목록이 null/문자열/객체인 경우나 시장 필드가 명세와 다른 자료형인 경우는 임의로 빈 데이터로 바꾸지 않고 단계별 오류를 기록합니다. 기준 시각이 이전 영업일인 데이터도 있을 수 있으므로 API `dt`/`tm`과 수집 시각을 구분해야 합니다. 장외라는 이유만으로 이번 실패 원인을 확정하지 않습니다.
 
 기존 DB에는 `error_stage`와 `diagnostic_json` 열을 추가하고 데이터를 보존합니다. 쓰기 실패 원인도 가능하면 별도 트랜잭션으로 기록합니다. DB 자체가 잠겼거나 디스크가 가득 차 실패 기록조차 불가능하면 콘솔에 이를 알리고 중단합니다. 이미 커밋한 `running` 시도 이력은 유지되지만 이런 상황에서 오류 상세 저장을 보장할 수는 없습니다.
+
+
+## 종목별 섹터 태그 관리
+
+섹터는 사용자가 검토해 부여하는 **수동 분류**입니다. 시스템이 섹터를 추론하거나 외부 사이트를 자동 수집하지 않습니다. 모든 `sector` 명령은 API 키/네트워크 없이 로컬 DB에서 실행합니다. 기본 DB는 기존 `data/stock1.db`이며, 다른 DB는 명령 끝에 `--db 경로`를 붙입니다.
+
+### 종목 마스터와 마이그레이션
+
+업데이트 후 처음 DB를 여는 명령(`status`, `latest`, `collect`, `sector`)에서 새 테이블을 추가하고 **과거 성공 수집 기록**의 종목을 `stocks`에 한 번 채웁니다. 동일 종목의 이름은 수집 시각순으로 가장 최근에 관측된 이름을 사용합니다. 이후 `collect`와 `collect --test-now`의 성공 회차 저장 시 종목을 자동 등록하고 이름 변경을 갱신합니다. 테스트 모드에서 실제 API가 반환한 종목도 마스터에 들어갑니다. `once`는 계속 콘솔 조회만 합니다.
+
+기존 수집 이력과 원본 JSON은 삭제·수정하지 않습니다. 섹터 연결은 종목코드를 참조하므로 이름이 바뀌어도 유지됩니다. 종목 마스터 대상은 **ASCII 숫자 6자리 문자열**이고 앞자리 0을 보존합니다. 이름 미제공/공백 또는 이 범위 밖 코드의 관측은 경고 후 마스터에서만 제외하며 기존 순위 기록은 그대로 보존합니다. 추후 다른 코드 형식이 필요하면 공식 형식을 확인해 별도로 지원해야 합니다.
+
+### 기본 명령과 실제 종목 예시
+
+먼저 기존 수집으로 등록된 종목을 확인합니다.
+
+```powershell
+.\.venv\Scripts\python.exe -m kiwoom_collector sector untagged
+.\.venv\Scripts\python.exe -m kiwoom_collector sector show 005930
+```
+
+아래는 **삼성전자(005930), SK하이닉스(000660), NAVER(035420)가 이미 종목 마스터에 있을 때**의 수동 등록 예시입니다. 없는 종목은 오류로 거부합니다. 임의로 종목명을 만들어 등록하지 않으며, 해당 종목이 조회순위에 포함된 수집이 먼저 필요합니다. 예시 분류는 사용자가 검토할 태그이며 공식 업종 분류를 뜻하지 않습니다.
+
+```powershell
+.\.venv\Scripts\python.exe -m kiwoom_collector sector add "반도체"
+.\.venv\Scripts\python.exe -m kiwoom_collector sector add "IT하드웨어"
+.\.venv\Scripts\python.exe -m kiwoom_collector sector add "인터넷"
+.\.venv\Scripts\python.exe -m kiwoom_collector sector tag 005930 "반도체" --source "수동 검토"
+.\.venv\Scripts\python.exe -m kiwoom_collector sector tag 005930 "IT하드웨어" --source "수동 검토"
+.\.venv\Scripts\python.exe -m kiwoom_collector sector tag 000660 "반도체" --source "수동 검토"
+.\.venv\Scripts\python.exe -m kiwoom_collector sector tag 035420 "인터넷" --source "수동 검토"
+.\.venv\Scripts\python.exe -m kiwoom_collector sector show 005930
+.\.venv\Scripts\python.exe -m kiwoom_collector sector list
+.\.venv\Scripts\python.exe -m kiwoom_collector sector untagged
+```
+
+잘못 연결한 태그는 다음으로 해제합니다. 종목·섹터·수집 이력은 삭제되지 않고 연결만 해제됩니다.
+
+```powershell
+.\.venv\Scripts\python.exe -m kiwoom_collector sector untag 005930 "IT하드웨어" --source "수동 정정"
+```
+
+`sector add`는 이름 앞뒤 공백을 제거하고 같은 이름의 중복 생성을 막습니다(내부 공백·대소문자 구분). `sector tag`는 기존 섹터에만 연결합니다. 같은 출처로 같은 태그를 다시 등록하면 변경하지 않습니다. 출처가 다르면 연결을 중복 생성하지 않고 출처·수정 시각을 갱신하고 감사 이력에 남깁니다. 출처 생략 시 `수동`이며, 예를 들어 본인이 자료를 검토한 경우 `--source "인포스탁 참고·2026-10-19 수동 검토"`로 기록할 수 있습니다. 출처 문구를 시스템이 사실 확인하는 것은 아닙니다.
+
+### CSV 일괄 등록
+
+UTF-8 또는 UTF-8 BOM CSV를 준비합니다. Excel에서는 종목코드를 **텍스트 열**로 지정하고 `CSV UTF-8`로 저장하세요. 이미 `5930`처럼 0이 지워진 코드는 자동 보정하지 않습니다.
+
+```csv
+stock_code,sector_name
+005930,반도체
+005930,IT하드웨어
+000660,반도체
+035420,인터넷
+```
+
+같은 종목의 서로 다른 섹터는 허용합니다. **같은 종목-섹터 쌍의 중복 행**, 잘못된 코드, 미등록 종목, 빈 섹터명/잘못된 열은 오류입니다. 한 행이라도 오류가 있으면 파일 전체를 적용하지 않습니다. 줄 번호별 오류를 표시하고 종료 코드 1을 반환합니다. DB에 이미 있는 동일 출처의 연결은 `unchanged`, 출처가 바뀌면 `updated`로 처리합니다. CSV에 등장한 새 섹터는 저장 단계에서 자동 생성합니다.
+
+먼저 검증만 실행합니다.
+
+```powershell
+.\.venv\Scripts\python.exe -m kiwoom_collector sector import .\sectors.csv --source "수동 검토 CSV" --dry-run
+```
+
+결과의 `errors`가 빈 목록인지, `new_sectors`, `added`/`updated`/`unchanged` 계획이 맞는지 확인한 후 적용합니다.
+
+```powershell
+.\.venv\Scripts\python.exe -m kiwoom_collector sector import .\sectors.csv --source "수동 검토 CSV"
+.\.venv\Scripts\python.exe -m kiwoom_collector sector list
+```
+
+`--dry-run`은 섹터·연결·수정 이력을 저장하지 않습니다. 단, DB를 처음 열면 공통 스키마 마이그레이션과 기존 관측 기반 마스터 초기화는 실행됩니다. 실제 적용 때도 다시 검증하며 섹터 생성·모든 연결·출처 이력을 단일 트랜잭션으로 저장합니다. 오류가 나면 전체 롤백합니다. CSV의 출처는 `--source`로 한 번 지정하며 생략 시 `CSV`입니다.
+
+## SQLite 백업, 업데이트 및 복원 (Windows)
+
+### 업데이트 전 백업
+
+모든 수집/조회 프로그램을 종료하고 기존 프로젝트 폴더의 PowerShell에서 실행하세요. SQLite backup API로 일관된 백업을 만들며 WAL 상태를 처리합니다. 파일 복사로 실행 중인 `.db`만 가져오지 마세요.
+
+```powershell
+@'
+from pathlib import Path
+from datetime import datetime
+import sqlite3
+original = Path("data/stock1.db").resolve()
+assert original.is_file(), "기존 DB가 없습니다. 새 설치라면 이 백업 단계를 건너뛰세요."
+backup = original.parent / "backups" / ("stock1-" + datetime.now().strftime("%Y%m%d-%H%M%S-%f") + ".db")
+backup.parent.mkdir(parents=True, exist_ok=True)
+source = sqlite3.connect(original.as_uri() + "?mode=ro", uri=True)
+target = sqlite3.connect(backup)
+try:
+    source.backup(target)
+    assert target.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+    assert not target.execute("PRAGMA foreign_key_check").fetchall()
+    print("백업 완료:", backup)
+finally:
+    target.close()
+    source.close()
+'@ | .\.venv\Scripts\python.exe -
+```
+
+Git으로 설치한 프로젝트라면 이어서 실행합니다. `git pull --ff-only`가 로컬 코드 변경 때문에 거부되면 변경 내용을 먼저 보존·검토하고 해결하세요. `.env`를 커밋하거나 `reset --hard`로 초기화하지 마세요.
+
+```powershell
+git switch main
+git pull --ff-only origin main
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+.\.venv\Scripts\python.exe -m kiwoom_collector status
+.\.venv\Scripts\python.exe -m kiwoom_collector sector untagged
+```
+
+마이그레이션 후 위 섹터 등록 예시를 실행할 수 있습니다. Git 저장소가 없는 ZIP 설치라면 `git pull` 대신 최신 ZIP을 새 폴더에 풀고 **종료된 기존 프로젝트의 `.env`와 `data` 폴더를 복사**한 뒤 새 가상환경에서 설치·테스트하세요. 키나 DB를 GitHub에 올리지 않습니다.
+
+### 백업으로 복원
+
+복원은 DB를 백업 시점으로 되돌리므로 **그 이후의 수집·태그 변경은 복원 대상 DB에서 사라집니다.** 모든 프로세스를 종료하고 현재 DB도 위 방법으로 별도 백업한 다음 실행하세요. 과거 스키마를 복원하면 다음 실행에서 새 테이블을 다시 안전하게 추가합니다. 아래는 백업 경로를 입력받아 SQLite backup API로 복원합니다.
+
+```powershell
+$stock1Backup = Read-Host "복원할 백업 DB의 전체 경로"
+@'
+from pathlib import Path
+import sqlite3
+import sys
+backup = Path(sys.argv[1]).resolve()
+original = Path("data/stock1.db").resolve()
+assert backup.is_file() and backup != original, "백업 경로를 확인하세요."
+original.parent.mkdir(parents=True, exist_ok=True)
+source = sqlite3.connect(backup.as_uri() + "?mode=ro", uri=True)
+try:
+    assert source.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
+    assert not source.execute("PRAGMA foreign_key_check").fetchall()
+    target = sqlite3.connect(original)
+    try:
+        source.backup(target)
+    finally:
+        target.close()
+finally:
+    source.close()
+print("복원 완료:", original)
+'@ | .\.venv\Scripts\python.exe - "$stock1Backup"
+.\.venv\Scripts\python.exe -m kiwoom_collector status
+.\.venv\Scripts\python.exe -m kiwoom_collector sector list
+```
+
+DB 구조·출처 이력의 상세 설명은 [DB 문서](docs/DATABASE.md)에 있습니다.

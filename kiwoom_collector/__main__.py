@@ -8,6 +8,7 @@ from pathlib import Path
 
 from .collector import collect, test_now
 from .storage import Store, DEFAULT_DB
+from .sectors import sector_command
 
 from .client import KiwoomClient, KiwoomError
 from .config import load_credentials
@@ -15,12 +16,17 @@ from .config import load_credentials
 
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="키움 조회순위 수집 및 SQLite 이력 조회")
-    parser.add_argument("command", choices=("check-config", "auth", "once", "collect", "status", "latest"), nargs="?", default="check-config")
+    parser.add_argument("command", choices=("check-config", "auth", "once", "collect", "status", "latest", "sector"), nargs="?", default="check-config")
     parser.add_argument("--qry-tp", choices=("1", "2", "3", "4", "5"), default="1", help="1:1분, 2:10분, 3:1시간, 4:당일 누적, 5:30초")
     parser.add_argument("--interval", type=int, default=300, metavar="SECONDS", help="수집 간격(초), 기본 300, 최소 60")
     parser.add_argument("--db", type=Path, default=DEFAULT_DB, help="SQLite 파일 경로")
     parser.add_argument("--test-now", action="store_true", help="collect 전용: 시간 제한 없이 조회 1회 저장 후 종료")
+    parser.add_argument("sector_args", nargs="*", help="sector 하위 명령 및 인자")
+    parser.add_argument("--source", help="섹터 분류 출처 (기본 수동, CSV 가져오기는 CSV)")
+    parser.add_argument("--dry-run", action="store_true", help="sector import: 검증만, 태그 저장 안 함")
     args = parser.parse_args(argv)
+    if args.command != "sector" and (args.sector_args or args.source is not None or args.dry_run):
+        parser.error("섹터 인자와 --source/--dry-run은 sector 명령 전용입니다.")
     if args.test_now and args.command != "collect":
         parser.error("--test-now는 collect 명령에서만 사용할 수 있습니다.")
     if args.command == "collect" and not args.test_now and args.interval < 60:
@@ -29,8 +35,12 @@ def main(argv=None) -> int:
     client = None
     store = None
     try:
-        if args.command in {"status", "latest", "collect"}:
+        if args.command in {"status", "latest", "collect", "sector"}:
             store = Store(args.db)
+        if args.command == "sector":
+            output, exit_code = sector_command(store, args.sector_args, args.source, args.dry_run)
+            print(json.dumps(output, ensure_ascii=False, indent=2))
+            return exit_code
         if args.command == "status":
             print(f"DB: {store.path}")
             state = store.status()
@@ -93,7 +103,7 @@ def main(argv=None) -> int:
         print("DB 오류: 파일 권한·디스크 공간·다른 프로세스 잠금을 확인하세요. 안전을 위해 중단합니다.", file=sys.stderr)
         return 1
     except OSError:
-        print("파일 접근 오류: DB 경로와 폴더 권한을 확인하세요.", file=sys.stderr)
+        print("파일 접근 오류: DB/CSV 경로와 폴더 권한을 확인하세요.", file=sys.stderr)
         return 1
     except KeyboardInterrupt:
         print("사용자가 중단했습니다.", file=sys.stderr)

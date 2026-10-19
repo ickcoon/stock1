@@ -1,10 +1,12 @@
 """Transactional local history. Only documented market fields enter persisted JSON."""
 import json
+import logging
 from pathlib import Path
 import sqlite3
 from uuid import uuid4
 
 from .config import PROJECT_ROOT
+from .sectors import migrate, upsert_stock
 from .diagnostics import MARKET_FIELDS, type_name
 from .errors import ResponseValidationError
 
@@ -49,43 +51,49 @@ class Store:
         self.path = Path(path).resolve()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(self.path, timeout=10)
-        self.db.row_factory = sqlite3.Row
-        self.db.execute("PRAGMA foreign_keys=ON")
-        self.db.execute("PRAGMA journal_mode=WAL")
-        self.db.executescript('''
-        CREATE TABLE IF NOT EXISTS collections (
-            id TEXT PRIMARY KEY,
-            collected_at TEXT NOT NULL,
-            environment TEXT NOT NULL CHECK(environment IN ('mock','real')),
-            api_id TEXT NOT NULL DEFAULT 'ka00198',
-            qry_tp TEXT NOT NULL,
-            status TEXT NOT NULL CHECK(status IN ('running','success','empty','error','interrupted')),
-            record_count INTEGER NOT NULL DEFAULT 0 CHECK(record_count >= 0),
-            error TEXT,
-            response_json TEXT,
-            UNIQUE(collected_at, environment, api_id, qry_tp)
-        );
-        CREATE TABLE IF NOT EXISTS ranking_records (
-            collection_id TEXT NOT NULL REFERENCES collections(id),
-            rank INTEGER NOT NULL CHECK(rank BETWEEN 1 AND 20),
-            stk_cd TEXT,
-            stk_nm TEXT,
-            raw_json TEXT NOT NULL,
-            PRIMARY KEY(collection_id, rank),
-            UNIQUE(collection_id, stk_cd)
-        );
-        CREATE INDEX IF NOT EXISTS idx_stock_history ON ranking_records(stk_cd, collection_id);
-        CREATE INDEX IF NOT EXISTS idx_collection_time ON collections(collected_at);
-        ''')
+        try:
+            self.db.row_factory = sqlite3.Row
+            self.db.execute("PRAGMA foreign_keys=ON")
+            self.db.execute("PRAGMA journal_mode=WAL")
+            self.db.executescript('''
+            CREATE TABLE IF NOT EXISTS collections (
+                id TEXT PRIMARY KEY,
+                collected_at TEXT NOT NULL,
+                environment TEXT NOT NULL CHECK(environment IN ('mock','real')),
+                api_id TEXT NOT NULL DEFAULT 'ka00198',
+                qry_tp TEXT NOT NULL,
+                status TEXT NOT NULL CHECK(status IN ('running','success','empty','error','interrupted')),
+                record_count INTEGER NOT NULL DEFAULT 0 CHECK(record_count >= 0),
+                error TEXT,
+                response_json TEXT,
+                UNIQUE(collected_at, environment, api_id, qry_tp)
+            );
+            CREATE TABLE IF NOT EXISTS ranking_records (
+                collection_id TEXT NOT NULL REFERENCES collections(id),
+                rank INTEGER NOT NULL CHECK(rank BETWEEN 1 AND 20),
+                stk_cd TEXT,
+                stk_nm TEXT,
+                raw_json TEXT NOT NULL,
+                PRIMARY KEY(collection_id, rank),
+                UNIQUE(collection_id, stk_cd)
+            );
+            CREATE INDEX IF NOT EXISTS idx_stock_history ON ranking_records(stk_cd, collection_id);
+            CREATE INDEX IF NOT EXISTS idx_collection_time ON collections(collected_at);
+            ''')
 
-        # Additive migration: historical rows are production observations by default.
-        with self.db:
-            columns = {row['name'] for row in self.db.execute("PRAGMA table_info(collections)")}
-            if 'test_mode' not in columns:
-                self.db.execute("ALTER TABLE collections ADD COLUMN test_mode INTEGER NOT NULL DEFAULT 0 CHECK(test_mode IN (0,1))")
-            for name in ("error_stage", "diagnostic_json"):
-                if name not in columns:
-                    self.db.execute(f"ALTER TABLE collections ADD COLUMN {name} TEXT")
+            # Additive migration: historical rows are production observations by default.
+            with self.db:
+                columns = {row['name'] for row in self.db.execute("PRAGMA table_info(collections)")}
+                if 'test_mode' not in columns:
+                    self.db.execute("ALTER TABLE collections ADD COLUMN test_mode INTEGER NOT NULL DEFAULT 0 CHECK(test_mode IN (0,1))")
+                for name in ("error_stage", "diagnostic_json"):
+                    if name not in columns:
+                        self.db.execute(f"ALTER TABLE collections ADD COLUMN {name} TEXT")
+
+            migrate(self.db)
+        except BaseException:
+            self.db.close()
+            raise
 
     def close(self):
         self.db.close()
@@ -112,6 +120,9 @@ class Store:
                 self.db.execute("INSERT INTO ranking_records VALUES(?,?,?,?,?)",
                                 (identifier, int(row['bigd_rank']), row.get('stk_cd'), row.get('stk_nm'),
                                  json.dumps(row, ensure_ascii=False)))
+            for row in records:
+                if not upsert_stock(self.db, row.get('stk_cd'), row.get('stk_nm')):
+                    logging.getLogger(__name__).warning('종목 마스터 갱신 제외: 코드/이름 미제공 또는 지원 코드 형식 아님 (관측 원본은 보존)')
             self.db.execute("UPDATE collections SET status=?,record_count=?,response_json=? WHERE id=? AND status='running'",
                             ('success' if records else 'empty', len(records),
                              json.dumps(pages, ensure_ascii=False), identifier))
