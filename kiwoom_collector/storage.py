@@ -66,18 +66,24 @@ class Store:
         CREATE INDEX IF NOT EXISTS idx_collection_time ON collections(collected_at);
         ''')
 
+        # Additive migration: historical rows are production observations by default.
+        with self.db:
+            columns = {row['name'] for row in self.db.execute("PRAGMA table_info(collections)")}
+            if 'test_mode' not in columns:
+                self.db.execute("ALTER TABLE collections ADD COLUMN test_mode INTEGER NOT NULL DEFAULT 0 CHECK(test_mode IN (0,1))")
+
     def close(self):
         self.db.close()
 
-    def begin(self, at, environment, qry_tp):
+    def begin(self, at, environment, qry_tp, *, test_mode=False):
         from .client import KST
         timestamp = at.astimezone(KST).isoformat(timespec="seconds")
         identifier = str(uuid4())
         with self.db:
             cursor = self.db.execute(
-                "INSERT INTO collections(id,collected_at,environment,qry_tp,status) VALUES(?,?,?,?, 'running') "
+                "INSERT INTO collections(id,collected_at,environment,qry_tp,test_mode,status) VALUES(?,?,?,?,?, 'running') "
                 "ON CONFLICT(collected_at,environment,api_id,qry_tp) DO NOTHING",
-                (identifier, timestamp, environment, qry_tp))
+                (identifier, timestamp, environment, qry_tp, int(test_mode)))
         return identifier if cursor.rowcount else None
 
     def finish(self, identifier, snapshot):
@@ -105,7 +111,7 @@ class Store:
             MAX(CASE WHEN status='success' THEN collected_at END) AS last_success,
             SUM(status='success') AS successes, SUM(status='error') AS errors,
             SUM(status='running') AS running, SUM(status='empty') AS empty,
-            SUM(status='interrupted') AS interrupted FROM collections''').fetchone()
+            SUM(status='interrupted') AS interrupted, SUM(test_mode) AS tests FROM collections''').fetchone()
         return dict(row) | {'records': self.db.execute('SELECT COUNT(*) FROM ranking_records').fetchone()[0]}
 
     def latest(self):

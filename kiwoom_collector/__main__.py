@@ -6,7 +6,7 @@ import sys
 import sqlite3
 from pathlib import Path
 
-from .collector import collect
+from .collector import collect, test_now
 from .storage import Store, DEFAULT_DB
 
 from .client import KiwoomClient, KiwoomError
@@ -19,8 +19,11 @@ def main(argv=None) -> int:
     parser.add_argument("--qry-tp", choices=("1", "2", "3", "4", "5"), default="1", help="1:1분, 2:10분, 3:1시간, 4:당일 누적, 5:30초")
     parser.add_argument("--interval", type=int, default=300, metavar="SECONDS", help="수집 간격(초), 기본 300, 최소 60")
     parser.add_argument("--db", type=Path, default=DEFAULT_DB, help="SQLite 파일 경로")
+    parser.add_argument("--test-now", action="store_true", help="collect 전용: 시간 제한 없이 조회 1회 저장 후 종료")
     args = parser.parse_args(argv)
-    if args.command == "collect" and args.interval < 60:
+    if args.test_now and args.command != "collect":
+        parser.error("--test-now는 collect 명령에서만 사용할 수 있습니다.")
+    if args.command == "collect" and not args.test_now and args.interval < 60:
         parser.error("--interval은 60초 이상이어야 합니다.")
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     client = None
@@ -35,7 +38,7 @@ def main(argv=None) -> int:
             print(f"최근 데이터 수집 성공(KST): {state['last_success'] or '없음'}")
             print(f"누적 수집 시도: {state['attempts']} / 누적 기록: {state['records']}")
             for key, label in (("successes", "성공"), ("empty", "빈 결과"), ("errors", "오류"),
-                               ("interrupted", "중단"), ("running", "진행/미완료")):
+                               ("interrupted", "중단"), ("running", "진행/미완료"), ("tests", "테스트 회차(전체에 포함)")):
                 print(f"{label}: {state[key] or 0}")
             return 0
         if args.command == "latest":
@@ -43,6 +46,7 @@ def main(argv=None) -> int:
             if run is None:
                 print("완료된 수집 이력이 없습니다.")
             else:
+                print(f"test_mode={bool(run['test_mode'])}")
                 print(f"최근 수집: {run['collected_at']} / {run['environment']} / {run['status']}")
                 for row in rows:
                     print(json.dumps(row, ensure_ascii=False))
@@ -54,6 +58,9 @@ def main(argv=None) -> int:
             return 0
         client = KiwoomClient(credentials)
         if args.command == "collect":
+            if args.test_now:
+                print(f"DB: {store.path}; test_mode=true, 시간 제한 무시, 조회 1회 후 종료")
+                return test_now(client, store, credentials.environment, args.qry_tp)
             print(f"DB: {store.path}; 평일 KST 09:00~15:30 (15:30 제외), {args.interval}초 간격")
             collect(client, store, credentials.environment, args.qry_tp, args.interval)
             return 0

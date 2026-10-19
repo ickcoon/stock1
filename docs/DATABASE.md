@@ -8,6 +8,7 @@
 - `collected_at`: 회차 시작 시각, KST 오프셋 `+09:00`을 포함하는 ISO 8601 문자열(초 정밀도). API의 `dt`/`tm`과 다릅니다.
 - `environment`: `mock`/`real`.
 - `api_id`: `ka00198`, `qry_tp`: 요청 집계 구분.
+- `test_mode`: SQLite INTEGER 0/1 (`false`/`true`). 기존 DB에는 비파괴적으로 열을 추가하며 기존 회차는 0으로 유지합니다. `collect --test-now`만 1입니다.
 - `status`: `running`, `success`, `empty`, `error`, `interrupted`.
 - `record_count`: 저장한 1~20위 종목 기록 수. 실패·빈 결과는 0.
 - `error`: 프로그램에서 만든 안전한 오류 설명. HTTP 상태나 API 오류 코드는 설명에 포함될 수 있으나 서버 메시지 원문·요청 본문·토큰은 저장하지 않습니다.
@@ -42,8 +43,11 @@ SQLite를 사용할 수 있는 도구에서 아래 SQL로 종목별 관측 이�
 SELECT c.collected_at, c.environment, r.rank, r.stk_cd, r.stk_nm, r.raw_json
 FROM ranking_records AS r
 JOIN collections AS c ON c.id = r.collection_id
-WHERE r.stk_cd = '039490'
+WHERE r.stk_cd = '039490' AND c.test_mode = 0
 ORDER BY c.collected_at;
 ```
 
 백업은 수집기를 종료한 뒤 `data` 폴더 전체를 보존하세요. 실행 중에는 WAL 파일도 관련되므로 `.db` 파일만 임의 복사하지 마세요. 기본 보관 기간/자동 삭제 정책은 없으며 파일은 계속 증가합니다. DB/로그는 Git 제외 대상입니다.
+
+
+`status`의 전체 횟수·기록 수와 `latest`는 테스트 회차도 포함합니다. 콘솔에서 테스트 횟수와 최신 회차의 `test_mode`를 확인할 수 있습니다. 동일 시각 중복 키에는 테스트 여부를 추가하지 않았으므로 운영/테스트라도 같은 초·환경·집계 구분이면 중복 차단됩니다. 테스트 오류·빈 결과도 테스트 플래그를 유지합니다. 인증 오류 응답/인증정보 원문은 저장하지 않습니다.

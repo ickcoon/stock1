@@ -62,3 +62,28 @@ def collect(client, store, environment, qry_tp='1', interval_seconds=300,
         due = current + timedelta(seconds=interval_seconds)
         if due <= finished:
             due = finished + timedelta(seconds=interval_seconds)
+
+
+def test_now(client, store, environment, qry_tp='1', now=lambda: datetime.now(KST)):
+    """One ranking HTTP request, no scheduler, retry, or continuation."""
+    identifier = store.begin(now(), environment, qry_tp, test_mode=True)
+    if identifier is None:
+        LOG.info("동일 시각의 수집 이력이 있어 테스트 호출/저장을 생략합니다.")
+        return 0
+    try:
+        snapshot = client.fetch_once(qry_tp, single_request=True)
+        store.finish(identifier, snapshot)
+        LOG.info("테스트 수집 %s: %d건 저장 후 종료 (%s)", identifier,
+                 len(snapshot.records), 'success' if snapshot.records else 'empty')
+        return 0
+    except KiwoomError as exc:
+        store.fail(identifier, str(exc))
+        LOG.error("테스트 수집 %s 실패: %s (재시도 없이 종료)", identifier, exc)
+        return 1
+    except (ValueError, sqlite3.IntegrityError):
+        store.fail(identifier, "응답 자료형 또는 DB 무결성 검증 실패")
+        LOG.error("테스트 수집 %s: 검증 실패 후 종료", identifier)
+        return 1
+    except KeyboardInterrupt:
+        store.fail(identifier, "사용자 중단", interrupted=True)
+        raise

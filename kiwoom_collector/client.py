@@ -65,8 +65,8 @@ class KiwoomClient:
     def close(self) -> None:
         self.session.close()
 
-    def _post(self, path: str, body: dict, headers: dict):
-        for attempt in range(3):
+    def _post(self, path: str, body: dict, headers: dict, *, attempts=3):
+        for attempt in range(attempts):
             # Conservative client policy, NOT a claimed official rate limit.
             if self._last_request is not None:
                 time.sleep(max(0, 1 - (time.monotonic() - self._last_request)))
@@ -82,8 +82,8 @@ class KiwoomClient:
             except requests.exceptions.SSLError:
                 raise KiwoomError("TLS 인증서 검증 실패. 인증서/프록시 설정을 확인하세요.") from None
             except (requests.Timeout, requests.ConnectionError):
-                if attempt == 2:
-                    raise KiwoomError("네트워크 연결/시간 초과: 최대 3회 시도 후 중단했습니다.") from None
+                if attempt == attempts - 1:
+                    raise KiwoomError(f"네트워크 연결/시간 초과: 최대 {attempts}회 시도 후 중단했습니다.") from None
                 LOG.warning("네트워크 오류: 재시도 %d/2", attempt + 1)
                 time.sleep(2 ** attempt)
                 continue
@@ -98,8 +98,8 @@ class KiwoomClient:
                 response.status_code == 200 and code in RATE_CODES
             )
             if retryable:
-                if attempt == 2:
-                    raise KiwoomError("호출 제한 또는 서버 오류: 최대 3회 시도 후 중단했습니다.")
+                if attempt == attempts - 1:
+                    raise KiwoomError(f"호출 제한 또는 서버 오류: 최대 {attempts}회 시도 후 중단했습니다.")
                 delay = 2 ** attempt
                 retry_after = response.headers.get("Retry-After", "")
                 if retry_after.isdigit():
@@ -123,12 +123,13 @@ class KiwoomClient:
             raise KiwoomError(f"키움 API 오류 return_code={code}. 공식 오류 명세를 확인하세요.")
         return data
 
-    def authenticate(self) -> Token:
+    def authenticate(self, *, attempts=3) -> Token:
         response, data = self._post(
             "/oauth2/token",
             {"grant_type": "client_credentials", "appkey": self.credentials.app_key,
              "secretkey": self.credentials.secret_key},
             {},  # Official core/auth.py issues tokens without authorization or api-id.
+            attempts=attempts,
         )
         data = self._check(response, data)
         value = data.get("token")
@@ -144,26 +145,27 @@ class KiwoomClient:
         LOG.info("인증 성공 (토큰 만료: %s)", expires_at.isoformat())
         return self.token
 
-    def _page(self, qry_tp: str, continuation: dict):
-        for auth_attempt in range(2):
+    def _page(self, qry_tp: str, continuation: dict, *, single_request=False):
+        for auth_attempt in range(1 if single_request else 2):
             if self.token is None or self.token.expires_at <= datetime.now(KST) + timedelta(seconds=30):
-                self.authenticate()
+                self.authenticate(attempts=1 if single_request else 3)
             response, data = self._post(
                 "/api/dostk/stkinfo", {"qry_tp": qry_tp},
                 {"api-id": "ka00198", "authorization": "Bearer " + self.token.value, **continuation},
+                attempts=1 if single_request else 3,
             )
             code = _code(data) if isinstance(data, dict) else None
             expired = response.status_code == 401 or (isinstance(data, dict) and _auth_error(code, data))
             if expired:
                 self.token = None
-                if auth_attempt == 0:
+                if auth_attempt == 0 and not single_request:
                     LOG.warning("인증 만료/무효 응답: 토큰 재발급 후 한 번 재조회합니다.")
                     continue
-                raise KiwoomError("토큰 재발급 후에도 인증에 실패했습니다.")
+                raise KiwoomError("인증에 실패했습니다. 단일 요청 모드에서는 재조회하지 않습니다." if single_request else "토큰 재발급 후에도 인증에 실패했습니다.")
             return self._check(response, data), response.headers
         raise AssertionError("unreachable")
 
-    def fetch_once(self, qry_tp: str = "1") -> Snapshot:
+    def fetch_once(self, qry_tp: str = "1", *, single_request=False) -> Snapshot:
         if qry_tp not in {"1", "2", "3", "4", "5"}:
             raise ValueError("qry_tp는 1~5 중 하나여야 합니다.")
         collected_at = datetime.now(KST)
@@ -172,7 +174,7 @@ class KiwoomClient:
         continuation = {}
         seen_keys = set()
         for _ in range(10):
-            data, headers = self._page(qry_tp, continuation)
+            data, headers = self._page(qry_tp, continuation, single_request=single_request)
             pages.append(data)
             rows = data.get("item_inq_rank", [])
             if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
@@ -180,6 +182,8 @@ class KiwoomClient:
             records.extend(rows)
             if headers.get("cont-yn") != "Y":
                 break
+            if single_request:
+                raise KiwoomError("연속조회가 필요하지만 테스트는 조회 요청 1회로 제한됩니다. 불완전한 순위는 저장하지 않습니다.")
             key = headers.get("next-key")
             if not key or key in seen_keys:
                 raise KiwoomError("연속조회 키가 누락되거나 반복되었습니다. 불완전한 결과를 출력하지 않습니다.")
