@@ -1,5 +1,5 @@
 """Read-only sector grouping of the latest successful ka00198 observation."""
-from contextlib import closing
+from contextlib import closing, contextmanager
 from pathlib import Path
 import sqlite3
 
@@ -9,7 +9,8 @@ def _rows(db, sql, parameters=()):
         return cursor.fetchall()
 
 
-def sector_summary(path):
+@contextmanager
+def read_database(path):
     path = Path(path).resolve()
     if not path.is_file():
         raise ValueError('DB가 없습니다. 수집 또는 기존 DB 경로를 확인하세요. summary는 DB를 생성하지 않습니다.')
@@ -24,12 +25,17 @@ def sector_summary(path):
             tables = {row['name'] for row in _rows(db, "SELECT name FROM sqlite_master WHERE type='table'")}
             if not {'collections', 'ranking_records', 'stocks', 'sectors', 'stock_sectors'} <= tables:
                 raise ValueError('섹터 분석에 필요한 DB 스키마가 없습니다. 백업 후 status로 마이그레이션하세요. summary 자체는 스키마를 변경하지 않습니다.')
-            return _summarize(db, path)
+            yield db, path
         finally:
             db.rollback()  # End the consistent read snapshot before connection close.
 
 
-def _summarize(db, path):
+def sector_summary(path):
+    with read_database(path) as (db, resolved):
+        return _summarize(db, resolved)
+
+
+def _summarize(db, path, collection_id=None):
     result = {
         'db': str(path), 'collection': None, 'top_n': 20,
         'observed_record_count': 0, 'unique_stock_count': 0,
@@ -39,8 +45,8 @@ def _summarize(db, path):
         'note': '현재 섹터 태그 기준 분석. 군집 후보는 2종목 이상이라는 뜻이며 주도섹터·투자 판단이 아닙니다. 비율 분모는 항상 20입니다.',
     }
     runs = _rows(db, """SELECT id,collected_at,environment,test_mode,qry_tp,record_count FROM collections
-        WHERE status='success' AND api_id='ka00198'
-        ORDER BY collected_at DESC,rowid DESC LIMIT 1""")
+        WHERE status='success' AND api_id='ka00198' AND (? IS NULL OR id=?)
+        ORDER BY collected_at DESC,rowid DESC LIMIT 1""", (collection_id, collection_id))
     if not runs:
         result['note'] = '성공한 ka00198 수집 이력이 없습니다. ' + result['note']
         return result

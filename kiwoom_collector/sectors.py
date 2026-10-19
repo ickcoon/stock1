@@ -228,7 +228,7 @@ class SectorManager:
 def sector_command(store, args, source=None, dry_run=False, output=None):
     manager = SectorManager(store)
     if not args:
-        raise ValueError('sector add/tag/untag/show/list/untagged/import/export-untagged/summary 중 하나를 지정하세요.')
+        raise ValueError('sector add/tag/untag/show/list/untagged/import/export-untagged/summary/timeline 중 하나를 지정하세요.')
     action, *values = args
     arities = {'add': 1, 'tag': 2, 'untag': 2, 'show': 1, 'list': 0, 'untagged': 0, 'import': 1, 'export-untagged': 0}
     if action not in arities or len(values) != arities[action]:

@@ -1,4 +1,5 @@
 """Read-only authentication, snapshots, scheduled collection and local history."""
+from datetime import datetime
 import argparse
 import json
 import logging
@@ -10,8 +11,10 @@ from .collector import collect, test_now
 from .storage import Store, DEFAULT_DB
 from .sectors import sector_command
 from .summary import sector_summary
+from .schedule import collect_schedule, load_holidays, SLOTS
+from .timeline import sector_timeline
 
-from .client import KiwoomClient, KiwoomError
+from .client import KST, KiwoomClient, KiwoomError
 from .config import load_credentials
 
 
@@ -19,14 +22,27 @@ def main(argv=None) -> int:
     parser = argparse.ArgumentParser(description="키움 조회순위 수집 및 SQLite 이력 조회")
     parser.add_argument("command", choices=("check-config", "auth", "once", "collect", "status", "latest", "sector"), nargs="?", default="check-config")
     parser.add_argument("--qry-tp", choices=("1", "2", "3", "4", "5"), default="1", help="1:1분, 2:10분, 3:1시간, 4:당일 누적, 5:30초")
-    parser.add_argument("--interval", type=int, default=300, metavar="SECONDS", help="수집 간격(초), 기본 300, 최소 60")
+    parser.add_argument("--interval", type=int, default=None, metavar="SECONDS", help="수집 간격(초), 기본 300, 최소 60")
     parser.add_argument("--db", type=Path, default=DEFAULT_DB, help="SQLite 파일 경로")
     parser.add_argument("--test-now", action="store_true", help="collect 전용: 시간 제한 없이 조회 1회 저장 후 종료")
     parser.add_argument("sector_args", nargs="*", help="sector 하위 명령 및 인자")
     parser.add_argument("--source", help="섹터 분류 출처 (기본 수동, CSV 가져오기는 CSV)")
     parser.add_argument("--dry-run", action="store_true", help="sector import: 검증만, 태그 저장 안 함")
     parser.add_argument("--output", type=Path, help="sector export-untagged: 새 CSV 출력 경로 (덮어쓰기 금지)")
+    parser.add_argument('--schedule', action='store_true', help='collect: KST 하루 10회 고정 시간표')
+    parser.add_argument('--holidays', type=Path, help='고정 일정용 KRX 휴장일 목록 파일')
+    parser.add_argument('--date', help='sector timeline: YYYY-MM-DD, 기본 KST 오늘')
+    parser.add_argument('--environment', choices=('mock', 'real'), default=None, help='sector timeline 분석 환경, 기본 mock')
     args = parser.parse_args(argv)
+    if (args.schedule or args.holidays) and args.command != 'collect':
+        parser.error('--schedule/--holidays는 collect 전용입니다.')
+    if args.holidays and not args.schedule:
+        parser.error('--holidays는 --schedule과 함께 사용하세요.')
+    if args.schedule and (args.test_now or args.interval is not None):
+        parser.error('--schedule은 --test-now/--interval과 함께 사용할 수 없습니다.')
+    if (args.date is not None or args.environment is not None) and not (args.command == 'sector' and args.sector_args == ['timeline']):
+        parser.error('--date/--environment는 sector timeline 전용입니다.')
+    args.interval = 300 if args.interval is None else args.interval
     if args.output is not None and not (args.command == "sector" and args.sector_args == ["export-untagged"]):
         parser.error('--output은 sector export-untagged 전용입니다.')
     if args.command == "sector" and args.sector_args == ["export-untagged"] and args.output is None:
@@ -41,6 +57,12 @@ def main(argv=None) -> int:
     client = None
     store = None
     try:
+        if args.command == 'sector' and args.sector_args[:1] == ['timeline']:
+            if args.sector_args != ['timeline'] or args.source is not None or args.dry_run:
+                raise ValueError('sector timeline 인자를 확인하세요. --date/--environment/--qry-tp/--db만 사용합니다.')
+            report = sector_timeline(args.db, args.date or datetime.now(KST).date().isoformat(), args.environment or 'mock', args.qry_tp)
+            print(json.dumps(report, ensure_ascii=False, indent=2))
+            return 0
         # Route before Store construction: summary must never initialize/migrate a DB.
         if args.command == "sector" and args.sector_args == ["summary"]:
             if args.source is not None or args.dry_run:
@@ -76,6 +98,7 @@ def main(argv=None) -> int:
             if run is None:
                 print("완료된 수집 이력이 없습니다.")
             else:
+                print(f"예정 시각: {run.get('scheduled_at') or '간격/단일 수집'}")
                 print(f"test_mode={bool(run['test_mode'])}")
                 print(f"최근 수집: {run['collected_at']} / {run['environment']} / {run['status']}")
                 for row in rows:
@@ -88,6 +111,11 @@ def main(argv=None) -> int:
             return 0
         client = KiwoomClient(credentials)
         if args.command == "collect":
+            if args.schedule:
+                holidays = load_holidays(args.holidays)
+                print(f"고정 일정 KST 하루 10회: {', '.join(SLOTS)}; 휴장일 파일: {'사용' if args.holidays else '없음 (주말만 자동 제외)'}")
+                collect_schedule(client, store, credentials.environment, args.qry_tp, holidays)
+                return 0
             if args.test_now:
                 print(f"DB: {store.path}; test_mode=true, 시간 제한 무시, 조회 1회 후 종료")
                 return test_now(client, store, credentials.environment, args.qry_tp)

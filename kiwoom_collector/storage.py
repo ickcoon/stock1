@@ -87,9 +87,11 @@ class Store:
                 columns = {row['name'] for row in self.db.execute("PRAGMA table_info(collections)")}
                 if 'test_mode' not in columns:
                     self.db.execute("ALTER TABLE collections ADD COLUMN test_mode INTEGER NOT NULL DEFAULT 0 CHECK(test_mode IN (0,1))")
-                for name in ("error_stage", "diagnostic_json"):
+                for name in ("error_stage", "diagnostic_json", "scheduled_at"):
                     if name not in columns:
                         self.db.execute(f"ALTER TABLE collections ADD COLUMN {name} TEXT")
+
+                self.db.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_unique_scheduled_collection ON collections(scheduled_at,environment,api_id,qry_tp) WHERE scheduled_at IS NOT NULL")
 
             migrate(self.db)
         except BaseException:
@@ -99,15 +101,16 @@ class Store:
     def close(self):
         self.db.close()
 
-    def begin(self, at, environment, qry_tp, *, test_mode=False):
+    def begin(self, at, environment, qry_tp, *, test_mode=False, scheduled_at=None):
         from .client import KST
         timestamp = at.astimezone(KST).isoformat(timespec="seconds")
+        planned = scheduled_at.astimezone(KST).isoformat(timespec="seconds") if scheduled_at is not None else None
         identifier = str(uuid4())
         with self.db:
             with closing(self.db.execute(
-                "INSERT INTO collections(id,collected_at,environment,qry_tp,test_mode,status) VALUES(?,?,?,?,?, 'running') "
-                "ON CONFLICT(collected_at,environment,api_id,qry_tp) DO NOTHING",
-                (identifier, timestamp, environment, qry_tp, int(test_mode)))) as cursor:
+                "INSERT INTO collections(id,collected_at,environment,qry_tp,test_mode,scheduled_at,status) VALUES(?,?,?,?,?,?, 'running') "
+                "ON CONFLICT DO NOTHING",
+                (identifier, timestamp, environment, qry_tp, int(test_mode), planned))) as cursor:
                 inserted = bool(cursor.rowcount)
         return identifier if inserted else None
 
