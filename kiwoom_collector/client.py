@@ -56,7 +56,7 @@ def _auth_error(code: int | None, data: dict) -> bool:
 class KiwoomClient:
     def __init__(self, credentials: Credentials):
         self.credentials = credentials
-        # Only the documented production host; no arbitrary URL or order API interface.
+        # Only the two documented hosts; no arbitrary URL or order API interface.
         self.session = requests.Session()
         self.token: Token | None = None
         self._last_request: float | None = None
@@ -72,7 +72,7 @@ class KiwoomClient:
             self._last_request = time.monotonic()
             try:
                 response = self.session.post(
-                    "https://api.kiwoom.com" + path,
+                    self.credentials.base_url + path,
                     json=body,
                     headers={"Content-Type": "application/json;charset=UTF-8", **headers},
                     timeout=(5, 20),

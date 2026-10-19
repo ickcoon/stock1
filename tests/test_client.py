@@ -1,3 +1,4 @@
+from contextlib import nullcontext
 from datetime import datetime, timedelta
 from unittest import TestCase
 from unittest.mock import Mock, patch
@@ -42,11 +43,11 @@ class ClientTests(TestCase):
         self.assertEqual(result.records, [row])
         self.assertEqual(result.collected_at.utcoffset(), timedelta(hours=9))
         auth, query = self.session.post.call_args_list
-        self.assertEqual(auth.args[0], "https://api.kiwoom.com/oauth2/token")
+        self.assertEqual(auth.args[0], "https://mockapi.kiwoom.com/oauth2/token")
         self.assertEqual(auth.kwargs['json'], {"grant_type": "client_credentials", "appkey": "test-key", "secretkey": "test-secret"})
         self.assertNotIn('authorization', auth.kwargs['headers'])
         self.assertFalse(auth.kwargs['allow_redirects'])
-        self.assertEqual(query.args[0], "https://api.kiwoom.com/api/dostk/stkinfo")
+        self.assertEqual(query.args[0], "https://mockapi.kiwoom.com/api/dostk/stkinfo")
         self.assertEqual(query.kwargs['json'], {"qry_tp": "1"})
         self.assertEqual(query.kwargs['headers']['api-id'], 'ka00198')
         self.assertEqual(query.kwargs['headers']['authorization'], 'Bearer test-only-token')
@@ -140,3 +141,31 @@ class ClientTests(TestCase):
         with self.assertRaises(ValueError):
             self.client.fetch_once('6')
         self.session.post.assert_not_called()
+
+    def test_real_auth_and_query_use_same_host(self):
+        self.client = KiwoomClient(Credentials("test-key", "test-secret", environment="real"))
+        self.session.post.side_effect = [token_response(), rank_response()]
+        self.client.fetch_once()
+        self.assertEqual([call.args[0] for call in self.session.post.call_args_list], [
+            "https://api.kiwoom.com/oauth2/token",
+            "https://api.kiwoom.com/api/dostk/stkinfo",
+        ])
+
+    def test_cli_commands_preserve_environment_and_hide_secrets(self):
+        for environment in ("mock", "real"):
+            for command in ("check-config", "auth", "once"):
+                with self.subTest(environment=environment, command=command):
+                    self.session.post.reset_mock()
+                    self.session.post.side_effect = [token_response(), rank_response()]
+                    log_capture = self.assertLogs("kiwoom_collector.client", level="INFO") if command != "check-config" else nullcontext()
+                    with patch("kiwoom_collector.__main__.load_credentials", return_value=Credentials("test-key", "test-secret", environment)), patch("builtins.print") as output, log_capture as logs:
+                        self.assertEqual(main([command]), 0)
+                        text = str(output.call_args_list) + (str(logs.output) if command != "check-config" else "")
+                        self.assertIn(environment, text)
+                        for secret in ("test-key", "test-secret", "test-only-token"):
+                            self.assertNotIn(secret, text)
+                    if command == "check-config":
+                        self.session.post.assert_not_called()
+                    else:
+                        host = "mockapi" if environment == "mock" else "api"
+                        self.assertTrue(all(call.args[0].startswith(f"https://{host}.kiwoom.com/") for call in self.session.post.call_args_list))

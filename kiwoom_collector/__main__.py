@@ -17,6 +17,7 @@ def main(argv=None) -> int:
     client = None
     try:
         credentials = load_credentials()
+        print(f"API 환경: {credentials.environment} ({credentials.base_url})")
         if args.command == "check-config":
             print("APP KEY / SECRET KEY 설정 확인 완료. API 호출은 수행하지 않았습니다.")
             return 0
