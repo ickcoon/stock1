@@ -11,6 +11,8 @@
 - `test_mode`: SQLite INTEGER 0/1 (`false`/`true`). 기존 DB에는 비파괴적으로 열을 추가하며 기존 회차는 0으로 유지합니다. `collect --test-now`만 1입니다.
 - `status`: `running`, `success`, `empty`, `error`, `interrupted`.
 - `record_count`: 저장한 1~20위 종목 기록 수. 실패·빈 결과는 0.
+- `error_stage`: `api_request` / `response_validation` / `db_store`. 이전 버전 오류는 NULL.
+- `diagnostic_json`: 인증정보·필드값을 제외한 자료형·행 수·HTTP 상태·숫자 API 코드·실패 발견 위치의 JSON. 오류 시 기록.
 - `error`: 프로그램에서 만든 안전한 오류 설명. HTTP 상태나 API 오류 코드는 설명에 포함될 수 있으나 서버 메시지 원문·요청 본문·토큰은 저장하지 않습니다.
 - `response_json`: 완료된 조회 페이지들의 JSON 배열. 각 페이지에서 공식 종목 필드와 `return_code`만 보존합니다. 오류·중단으로 완료하지 못한 조회에는 이 값이 없습니다.
 
@@ -51,3 +53,6 @@ ORDER BY c.collected_at;
 
 
 `status`의 전체 횟수·기록 수와 `latest`는 테스트 회차도 포함합니다. 콘솔에서 테스트 횟수와 최신 회차의 `test_mode`를 확인할 수 있습니다. 동일 시각 중복 키에는 테스트 여부를 추가하지 않았으므로 운영/테스트라도 같은 초·환경·집계 구분이면 중복 차단됩니다. 테스트 오류·빈 결과도 테스트 플래그를 유지합니다. 인증 오류 응답/인증정보 원문은 저장하지 않습니다.
+
+
+진단 열 추가는 기존 행을 삭제하거나 재작성하지 않는 `ALTER TABLE ... ADD COLUMN` 방식입니다. 진단의 필드 경로는 정적 공식 필드명과 행 인덱스로만 구성하며 실제 종목 데이터/요청 본문/헤더는 출력하지 않습니다. 상세 검증 실패에도 `response_json`에 실패한 시장 데이터 원문을 임의 저장하지 않습니다. 실패 이유는 `error`, 안전한 구조 요약은 `diagnostic_json`으로 확인하세요.

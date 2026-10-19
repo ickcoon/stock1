@@ -11,15 +11,13 @@ import time
 import requests
 
 from .config import Credentials
+from .errors import KiwoomError, ResponseValidationError
+from .diagnostics import response_shape
 
 KST = timezone(timedelta(hours=9))
 LOG = logging.getLogger(__name__)
 AUTH_CODES = {8005, 8031, 8103}
 RATE_CODES = {1700, 1701, 1702}
-
-
-class KiwoomError(Exception):
-    """Safe diagnostic: never includes request bodies or raw server messages."""
 
 
 @dataclass
@@ -38,13 +36,13 @@ class Snapshot:
 def _code(data: dict) -> int | None:
     value = data.get("return_code")
     if isinstance(value, bool):
-        raise KiwoomError("응답 return_code 형식이 잘못되었습니다.")
+        raise ResponseValidationError("return_code: expected=int 또는 숫자 문자열; 형식 불일치 (값 생략)")
     if value is None:
         return None
     try:
         return int(str(value))
     except ValueError:
-        raise KiwoomError("응답 return_code 형식이 잘못되었습니다.") from None
+        raise ResponseValidationError("return_code: expected=int 또는 숫자 문자열; 형식 불일치 (값 생략)") from None
 
 
 def _auth_error(code: int | None, data: dict) -> bool:
@@ -60,6 +58,7 @@ class KiwoomClient:
         # Only the two documented hosts; no arbitrary URL or order API interface.
         self.session = requests.Session()
         self.token: Token | None = None
+        self.last_diagnostic = {}
         self._last_request: float | None = None
 
     def close(self) -> None:
@@ -93,6 +92,8 @@ class KiwoomClient:
                 data = response.json()
             except ValueError:
                 data = None
+            if path == "/api/dostk/stkinfo":
+                self.last_diagnostic = response_shape(data, response.status_code)
             code = _code(data) if isinstance(data, dict) else None
             retryable = response.status_code in (429, 500, 502, 503, 504) or (
                 response.status_code == 200 and code in RATE_CODES
@@ -117,7 +118,7 @@ class KiwoomClient:
         if not 200 <= response.status_code < 300:
             raise KiwoomError(f"HTTP {response.status_code}: API 요청 실패. 접근 권한/네트워크를 확인하세요.")
         if not isinstance(data, dict):
-            raise KiwoomError("API 응답이 JSON 객체가 아닙니다.")
+            raise ResponseValidationError("response: expected=dict actual=non-object (JSON 디코딩 또는 응답 형식 실패)")
         code = _code(data)
         if code not in (None, 0):
             raise KiwoomError(f"키움 API 오류 return_code={code}. 공식 오류 명세를 확인하세요.")
@@ -168,6 +169,7 @@ class KiwoomClient:
     def fetch_once(self, qry_tp: str = "1", *, single_request=False) -> Snapshot:
         if qry_tp not in {"1", "2", "3", "4", "5"}:
             raise ValueError("qry_tp는 1~5 중 하나여야 합니다.")
+        self.last_diagnostic = {}
         collected_at = datetime.now(KST)
         records = []
         pages = []
@@ -178,7 +180,7 @@ class KiwoomClient:
             pages.append(data)
             rows = data.get("item_inq_rank", [])
             if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
-                raise KiwoomError("item_inq_rank 응답 형식이 목록/객체가 아닙니다.")
+                raise ResponseValidationError("item_inq_rank: expected=list[dict] (목록/행 형식 불일치; diagnostic_json 참조)")
             records.extend(rows)
             if headers.get("cont-yn") != "Y":
                 break
@@ -192,18 +194,18 @@ class KiwoomClient:
         else:
             raise KiwoomError("연속조회 10페이지를 초과했습니다. 결과 완전성을 확인하세요.")
         selected = []
-        for row in records:
+        for index, row in enumerate(records):
             # Preserve the API's rank; never manufacture ranks from list positions.
             try:
                 rank = int(row["bigd_rank"])
             except (KeyError, TypeError, ValueError):
-                raise KiwoomError("bigd_rank가 없거나 정수가 아닙니다. 상위 20위 판별을 중단합니다.") from None
+                raise ResponseValidationError(f"item_inq_rank[{index}].bigd_rank: 누락 또는 정수 해석 실패 (값 생략)") from None
             if rank <= 0:
-                raise KiwoomError("bigd_rank가 0 이하입니다. 공식 설명이 모호하여 실제 의미 확인이 필요합니다.")
+                raise ResponseValidationError(f"item_inq_rank[{index}].bigd_rank: 0 이하, 공식 의미 확인 필요 (값 생략)")
             if rank <= 20:
                 selected.append(row)
         selected.sort(key=lambda row: int(row["bigd_rank"]))
         ranks = [int(row["bigd_rank"]) for row in selected]
         if len(set(ranks)) != len(ranks):
-            raise KiwoomError("응답에 중복 순위가 있습니다. 실제 응답 확인이 필요합니다.")
+            raise ResponseValidationError("item_inq_rank.bigd_rank: 중복 순위 (값 생략)")
         return Snapshot(collected_at, selected, pages)

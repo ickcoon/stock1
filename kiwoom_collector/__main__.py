@@ -40,6 +40,12 @@ def main(argv=None) -> int:
             for key, label in (("successes", "성공"), ("empty", "빈 결과"), ("errors", "오류"),
                                ("interrupted", "중단"), ("running", "진행/미완료"), ("tests", "테스트 회차(전체에 포함)")):
                 print(f"{label}: {state[key] or 0}")
+            failure = store.last_failure()
+            if failure:
+                print(f"최근 오류: {failure['collected_at']} / id={failure['id']} / stage={failure['error_stage'] or 'legacy_unknown'}")
+                print(f"원인: {failure['error']}")
+                if failure['diagnostic_json']:
+                    print(f"안전 진단: {failure['diagnostic_json']}")
             return 0
         if args.command == "latest":
             run, rows = store.latest()

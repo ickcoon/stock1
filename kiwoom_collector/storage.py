@@ -5,30 +5,42 @@ import sqlite3
 from uuid import uuid4
 
 from .config import PROJECT_ROOT
+from .diagnostics import MARKET_FIELDS, type_name
+from .errors import ResponseValidationError
 
 DEFAULT_DB = PROJECT_ROOT / "data" / "stock1.db"
-FIELDS = ("stk_nm", "bigd_rank", "rank_chg", "rank_chg_sign", "past_curr_prc",
-          "base_comp_sign", "base_comp_chgr", "prev_base_sign", "prev_base_chgr", "dt", "tm", "stk_cd")
+FIELDS = MARKET_FIELDS
 
 
-def market_record(row):
+def market_record(row, location="record"):
+    if not isinstance(row, dict):
+        raise ResponseValidationError(f"{location}: expected=dict actual={type_name(row)}")
     result = {key: row[key] for key in FIELDS if key in row}
-    if any(not isinstance(value, str) for value in result.values()):
-        raise ValueError("공식 명세의 종목 필드는 문자열이어야 합니다.")
+    for key, value in result.items():
+        if not isinstance(value, str):
+            raise ResponseValidationError(f"{location}.{key}: expected=str actual={type_name(value)} (값 생략)")
     return result
 
 
-def market_page(body):
+def market_page(body, location="page"):
     # Authentication responses, headers, arbitrary server messages and unknown fields are never stored.
+    if not isinstance(body, dict):
+        raise ResponseValidationError(f"{location}: expected=dict actual={type_name(body)}")
     result = {}
     if "return_code" in body:
         code = body["return_code"]
         if isinstance(code, bool) or not isinstance(code, (int, str)):
-            raise ValueError("응답 코드 형식 오류")
-        int(code)  # Validate numeric status without changing the original JSON type.
+            raise ResponseValidationError(f"{location}.return_code: expected=int/str actual={type_name(code)}")
+        try:
+            int(code)
+        except ValueError:
+            raise ResponseValidationError(f"{location}.return_code: 숫자 형식 불일치 (값 생략)") from None
         result["return_code"] = code
     if "item_inq_rank" in body:
-        result["item_inq_rank"] = [market_record(row) for row in body["item_inq_rank"]]
+        rows = body["item_inq_rank"]
+        if not isinstance(rows, list):
+            raise ResponseValidationError(f"{location}.item_inq_rank: expected=list actual={type_name(rows)}")
+        result["item_inq_rank"] = [market_record(row, f"{location}.item_inq_rank[{index}]") for index, row in enumerate(rows)]
     return result
 
 
@@ -71,6 +83,9 @@ class Store:
             columns = {row['name'] for row in self.db.execute("PRAGMA table_info(collections)")}
             if 'test_mode' not in columns:
                 self.db.execute("ALTER TABLE collections ADD COLUMN test_mode INTEGER NOT NULL DEFAULT 0 CHECK(test_mode IN (0,1))")
+            for name in ("error_stage", "diagnostic_json"):
+                if name not in columns:
+                    self.db.execute(f"ALTER TABLE collections ADD COLUMN {name} TEXT")
 
     def close(self):
         self.db.close()
@@ -87,8 +102,8 @@ class Store:
         return identifier if cursor.rowcount else None
 
     def finish(self, identifier, snapshot):
-        records = [market_record(row) for row in snapshot.records]
-        pages = [market_page(page) for page in snapshot.pages]
+        records = [market_record(row, f"selected[{index}]") for index, row in enumerate(snapshot.records)]
+        pages = [market_page(page, f"pages[{index}]") for index, page in enumerate(snapshot.pages)]
         with self.db:
             state = self.db.execute("SELECT status FROM collections WHERE id=?", (identifier,)).fetchone()
             if state is None or state['status'] != 'running':
@@ -101,10 +116,11 @@ class Store:
                             ('success' if records else 'empty', len(records),
                              json.dumps(pages, ensure_ascii=False), identifier))
 
-    def fail(self, identifier, message, interrupted=False):
+    def fail(self, identifier, message, interrupted=False, *, stage=None, diagnostic=None):
         with self.db:
-            self.db.execute("UPDATE collections SET status=?,error=? WHERE id=? AND status='running'",
-                            ('interrupted' if interrupted else 'error', message, identifier))
+            self.db.execute("UPDATE collections SET status=?,error=?,error_stage=?,diagnostic_json=? WHERE id=? AND status='running'",
+                            ('interrupted' if interrupted else 'error', message, stage,
+                             json.dumps(diagnostic, ensure_ascii=False) if diagnostic else None, identifier))
 
     def status(self):
         row = self.db.execute('''SELECT COUNT(*) AS attempts, MAX(collected_at) AS last_attempt,
@@ -113,6 +129,10 @@ class Store:
             SUM(status='running') AS running, SUM(status='empty') AS empty,
             SUM(status='interrupted') AS interrupted, SUM(test_mode) AS tests FROM collections''').fetchone()
         return dict(row) | {'records': self.db.execute('SELECT COUNT(*) FROM ranking_records').fetchone()[0]}
+
+    def last_failure(self):
+        row = self.db.execute("SELECT id,collected_at,error,error_stage,diagnostic_json FROM collections WHERE status='error' ORDER BY collected_at DESC,rowid DESC LIMIT 1").fetchone()
+        return dict(row) if row else None
 
     def latest(self):
         run = self.db.execute("SELECT * FROM collections WHERE status IN ('success','empty') ORDER BY collected_at DESC, rowid DESC LIMIT 1").fetchone()
