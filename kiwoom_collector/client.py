@@ -32,6 +32,7 @@ class Token:
 class Snapshot:
     collected_at: datetime
     records: list[dict]
+    pages: list[dict] = field(default_factory=list)
 
 
 def _code(data: dict) -> int | None:
@@ -167,10 +168,12 @@ class KiwoomClient:
             raise ValueError("qry_tp는 1~5 중 하나여야 합니다.")
         collected_at = datetime.now(KST)
         records = []
+        pages = []
         continuation = {}
         seen_keys = set()
         for _ in range(10):
             data, headers = self._page(qry_tp, continuation)
+            pages.append(data)
             rows = data.get("item_inq_rank", [])
             if not isinstance(rows, list) or any(not isinstance(row, dict) for row in rows):
                 raise KiwoomError("item_inq_rank 응답 형식이 목록/객체가 아닙니다.")
@@ -199,4 +202,4 @@ class KiwoomClient:
         ranks = [int(row["bigd_rank"]) for row in selected]
         if len(set(ranks)) != len(ranks):
             raise KiwoomError("응답에 중복 순위가 있습니다. 실제 응답 확인이 필요합니다.")
-        return Snapshot(collected_at, selected)
+        return Snapshot(collected_at, selected, pages)

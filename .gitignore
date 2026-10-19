@@ -3,3 +3,14 @@
 __pycache__/
 *.py[cod]
 data/
+*.db
+*.db-*
+*.sqlite
+*.sqlite3
+*.log
+logs/
+.env.*
+!.env.example
+*.sqlite-*
+*.sqlite3-*
+*.log.*

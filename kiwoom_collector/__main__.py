@@ -1,27 +1,62 @@
-"""Explicit opt-in authentication / one snapshot; no scheduling or order operations."""
+"""Read-only authentication, snapshots, scheduled collection and local history."""
 import argparse
 import json
 import logging
 import sys
+import sqlite3
+from pathlib import Path
+
+from .collector import collect
+from .storage import Store, DEFAULT_DB
 
 from .client import KiwoomClient, KiwoomError
 from .config import load_credentials
 
 
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(description="키움 인증 및 조회순위 단일 조회")
-    parser.add_argument("command", choices=("check-config", "auth", "once"), nargs="?", default="check-config")
+    parser = argparse.ArgumentParser(description="키움 조회순위 수집 및 SQLite 이력 조회")
+    parser.add_argument("command", choices=("check-config", "auth", "once", "collect", "status", "latest"), nargs="?", default="check-config")
     parser.add_argument("--qry-tp", choices=("1", "2", "3", "4", "5"), default="1", help="1:1분, 2:10분, 3:1시간, 4:당일 누적, 5:30초")
+    parser.add_argument("--interval", type=int, default=300, metavar="SECONDS", help="수집 간격(초), 기본 300, 최소 60")
+    parser.add_argument("--db", type=Path, default=DEFAULT_DB, help="SQLite 파일 경로")
     args = parser.parse_args(argv)
+    if args.command == "collect" and args.interval < 60:
+        parser.error("--interval은 60초 이상이어야 합니다.")
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     client = None
+    store = None
     try:
+        if args.command in {"status", "latest", "collect"}:
+            store = Store(args.db)
+        if args.command == "status":
+            print(f"DB: {store.path}")
+            state = store.status()
+            print(f"최근 수집 시도(KST): {state['last_attempt'] or '없음'}")
+            print(f"최근 데이터 수집 성공(KST): {state['last_success'] or '없음'}")
+            print(f"누적 수집 시도: {state['attempts']} / 누적 기록: {state['records']}")
+            for key, label in (("successes", "성공"), ("empty", "빈 결과"), ("errors", "오류"),
+                               ("interrupted", "중단"), ("running", "진행/미완료")):
+                print(f"{label}: {state[key] or 0}")
+            return 0
+        if args.command == "latest":
+            run, rows = store.latest()
+            if run is None:
+                print("완료된 수집 이력이 없습니다.")
+            else:
+                print(f"최근 수집: {run['collected_at']} / {run['environment']} / {run['status']}")
+                for row in rows:
+                    print(json.dumps(row, ensure_ascii=False))
+            return 0
         credentials = load_credentials()
         print(f"API 환경: {credentials.environment} ({credentials.base_url})")
         if args.command == "check-config":
             print("APP KEY / SECRET KEY 설정 확인 완료. API 호출은 수행하지 않았습니다.")
             return 0
         client = KiwoomClient(credentials)
+        if args.command == "collect":
+            print(f"DB: {store.path}; 평일 KST 09:00~15:30 (15:30 제외), {args.interval}초 간격")
+            collect(client, store, credentials.environment, args.qry_tp, args.interval)
+            return 0
         if args.command == "auth":
             token = client.authenticate()
             print(f"인증 성공. 만료 시각(한국): {token.expires_at.isoformat()} (토큰 값 출력 안 함)")
@@ -41,12 +76,20 @@ def main(argv=None) -> int:
     except (ValueError, KiwoomError) as exc:
         print(f"오류: {exc}", file=sys.stderr)
         return 1
+    except sqlite3.Error:
+        print("DB 오류: 파일 권한·디스크 공간·다른 프로세스 잠금을 확인하세요. 안전을 위해 중단합니다.", file=sys.stderr)
+        return 1
+    except OSError:
+        print("파일 접근 오류: DB 경로와 폴더 권한을 확인하세요.", file=sys.stderr)
+        return 1
     except KeyboardInterrupt:
         print("사용자가 중단했습니다.", file=sys.stderr)
         return 130
     finally:
         if client is not None:
             client.close()
+        if store is not None:
+            store.close()
 
 
 if __name__ == "__main__":
