@@ -1,3 +1,4 @@
+from contextlib import closing
 from datetime import datetime
 from pathlib import Path
 import sqlite3
@@ -73,7 +74,7 @@ class TestNowTests(TestCase):
         # Current migration added test_mode as the final column before UNIQUE in SQLite's SQL text.
         import re
         source = re.sub(r',?\s*test_mode INTEGER NOT NULL DEFAULT 0 CHECK\(test_mode IN \(0,1\)\)', '', source)
-        with sqlite3.connect(old_path) as old:
+        with closing(sqlite3.connect(old_path)) as old, old:
             old.execute(source)
             old.execute("INSERT INTO collections(id,collected_at,environment,qry_tp,status) VALUES('old','2026-10-19T09:00:00+09:00','mock','1','empty')")
         migrated = Store(old_path)

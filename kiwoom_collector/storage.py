@@ -1,4 +1,5 @@
 """Transactional local history. Only documented market fields enter persisted JSON."""
+from contextlib import closing
 import json
 import logging
 from pathlib import Path
@@ -103,11 +104,12 @@ class Store:
         timestamp = at.astimezone(KST).isoformat(timespec="seconds")
         identifier = str(uuid4())
         with self.db:
-            cursor = self.db.execute(
+            with closing(self.db.execute(
                 "INSERT INTO collections(id,collected_at,environment,qry_tp,test_mode,status) VALUES(?,?,?,?,?, 'running') "
                 "ON CONFLICT(collected_at,environment,api_id,qry_tp) DO NOTHING",
-                (identifier, timestamp, environment, qry_tp, int(test_mode)))
-        return identifier if cursor.rowcount else None
+                (identifier, timestamp, environment, qry_tp, int(test_mode)))) as cursor:
+                inserted = bool(cursor.rowcount)
+        return identifier if inserted else None
 
     def finish(self, identifier, snapshot):
         records = [market_record(row, f"selected[{index}]") for index, row in enumerate(snapshot.records)]

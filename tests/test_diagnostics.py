@@ -1,4 +1,5 @@
 """Synthetic regressions; these fixtures are not claimed to be actual server responses."""
+from contextlib import closing
 from datetime import datetime
 import json
 from pathlib import Path
@@ -137,7 +138,7 @@ class DiagnosticsTests(TestCase):
 
     def test_legacy_database_adds_diagnostics_and_preserves_failure(self):
         path = Path(self.temp.name) / 'legacy.db'
-        with sqlite3.connect(path) as db:
+        with closing(sqlite3.connect(path)) as db, db:
             db.execute("""CREATE TABLE collections (
                 id TEXT PRIMARY KEY, collected_at TEXT NOT NULL, environment TEXT NOT NULL,
                 api_id TEXT NOT NULL DEFAULT 'ka00198', qry_tp TEXT NOT NULL,

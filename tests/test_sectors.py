@@ -1,3 +1,4 @@
+from contextlib import closing
 from datetime import datetime, timedelta
 import json
 from pathlib import Path
@@ -152,7 +153,7 @@ class SectorTests(TestCase):
     def test_migration_backfills_old_history_and_is_repeatable(self):
         # Remove only new schema from a disposable fixture to model the existing database.
         self.store.close()
-        with sqlite3.connect(self.path) as db:
+        with closing(sqlite3.connect(self.path)) as db, db:
             for table in ('stock_sector_events', 'stock_sectors', 'sectors', 'stocks', 'schema_migrations'):
                 db.execute(f'DROP TABLE {table}')
         migrated = Store(self.path)
@@ -199,13 +200,13 @@ class SectorTests(TestCase):
 
     def test_failed_backfill_rolls_back_migration_and_retries(self):
         self.store.close()
-        with sqlite3.connect(self.path) as db:
+        with closing(sqlite3.connect(self.path)) as db, db:
             for table in ('stock_sector_events', 'stock_sectors', 'sectors', 'stocks', 'schema_migrations'):
                 db.execute(f'DROP TABLE {table}')
         with patch('kiwoom_collector.sectors.upsert_stock', side_effect=sqlite3.OperationalError('simulated failure')):
             with self.assertRaises(sqlite3.OperationalError):
                 Store(self.path)
-        with sqlite3.connect(self.path) as db:
+        with closing(sqlite3.connect(self.path)) as db, db:
             self.assertEqual(db.execute('SELECT COUNT(*) FROM ranking_records').fetchone()[0], 3)
             self.assertIsNone(db.execute("SELECT name FROM sqlite_master WHERE name='schema_migrations'").fetchone())
         retry = Store(self.path)

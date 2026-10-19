@@ -1,4 +1,5 @@
 """Manual sector taxonomy, provenance and atomic UTF-8 CSV import. No inference."""
+from contextlib import closing
 import csv
 from datetime import datetime, timedelta, timezone
 import logging
@@ -56,13 +57,13 @@ def migrate(db):
             source TEXT NOT NULL, changed_at TEXT NOT NULL)''')
         db.execute('CREATE INDEX IF NOT EXISTS idx_sector_members ON stock_sectors(sector_id,stock_code)')
         if not db.execute("SELECT 1 FROM schema_migrations WHERE name='stock_master_v1'").fetchone():
-            rows = db.execute('''SELECT r.stk_cd,r.stk_nm FROM ranking_records r
-                JOIN collections c ON c.id=r.collection_id WHERE c.status='success'
-                ORDER BY c.collected_at,c.rowid,r.rank''')
             skipped = 0
-            for row in rows:
-                if not upsert_stock(db, row['stk_cd'], row['stk_nm']):
-                    skipped += 1
+            with closing(db.execute('''SELECT r.stk_cd,r.stk_nm FROM ranking_records r
+                JOIN collections c ON c.id=r.collection_id WHERE c.status='success'
+                ORDER BY c.collected_at,c.rowid,r.rank''')) as rows:
+                for row in rows:
+                    if not upsert_stock(db, row['stk_cd'], row['stk_nm']):
+                        skipped += 1
             db.execute("INSERT INTO schema_migrations VALUES('stock_master_v1',?)", (timestamp(),))
             if skipped:
                 LOG.warning('종목 마스터 초기화: 코드/이름 미제공 또는 6자리 숫자 코드가 아닌 과거 관측 %d건 제외 (원본 이력 보존)', skipped)
@@ -118,10 +119,11 @@ class SectorManager:
             self.db.execute('BEGIN IMMEDIATE')
             self._stock(code)
             sector = self._sector(name)
-            cursor = self.db.execute('DELETE FROM stock_sectors WHERE stock_code=? AND sector_id=?', (code, sector['sector_id']))
-            if cursor.rowcount:
+            with closing(self.db.execute('DELETE FROM stock_sectors WHERE stock_code=? AND sector_id=?', (code, sector['sector_id']))) as cursor:
+                removed = bool(cursor.rowcount)
+            if removed:
                 self.db.execute("INSERT INTO stock_sector_events(stock_code,sector_id,action,source,changed_at) VALUES(?,?,'untag',?,?)", (code, sector['sector_id'], source, timestamp()))
-            return bool(cursor.rowcount)
+            return removed
 
     def show(self, code):
         stock = dict(self._stock(code))
@@ -131,14 +133,15 @@ class SectorManager:
         return stock | {'sectors': [dict(row) for row in tags]}
 
     def list(self):
-        rows = self.db.execute('''SELECT s.sector_id,s.sector_name,s.created_at,t.stock_code,k.stock_name,t.source,t.updated_at
+        with closing(self.db.execute('''SELECT s.sector_id,s.sector_name,s.created_at,t.stock_code,k.stock_name,t.source,t.updated_at
             FROM sectors s LEFT JOIN stock_sectors t ON t.sector_id=s.sector_id
-            LEFT JOIN stocks k ON k.stock_code=t.stock_code ORDER BY s.sector_name,t.stock_code''')
-        return [dict(row) for row in rows]
+            LEFT JOIN stocks k ON k.stock_code=t.stock_code ORDER BY s.sector_name,t.stock_code''')) as rows:
+            return [dict(row) for row in rows]
 
     def untagged(self):
-        return [dict(row) for row in self.db.execute('''SELECT * FROM stocks k WHERE NOT EXISTS
-            (SELECT 1 FROM stock_sectors t WHERE t.stock_code=k.stock_code) ORDER BY stock_code''')]
+        with closing(self.db.execute('''SELECT * FROM stocks k WHERE NOT EXISTS
+            (SELECT 1 FROM stock_sectors t WHERE t.stock_code=k.stock_code) ORDER BY stock_code''')) as rows:
+            return [dict(row) for row in rows]
 
     def import_csv(self, path, source='CSV', dry_run=False):
         source = label(source, '출처')
