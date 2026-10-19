@@ -289,7 +289,7 @@ py -3 -m venv .venv
 
 ### CSV 일괄 등록
 
-UTF-8 또는 UTF-8 BOM CSV를 준비합니다. Excel에서는 종목코드를 **텍스트 열**로 지정하고 `CSV UTF-8`로 저장하세요. 이미 `5930`처럼 0이 지워진 코드는 자동 보정하지 않습니다.
+UTF-8 또는 UTF-8 BOM CSV를 준비합니다. 기존 두 열 `stock_code,sector_name`과 내보내기의 세 열 `stock_code,stock_name,sector_name`을 모두 지원하며, `stock_name`은 검토용으로만 사용합니다. Excel에서는 종목코드를 **텍스트 열**로 지정하고 `CSV UTF-8`로 저장하세요. 이미 `5930`처럼 0이 지워진 코드는 자동 보정하지 않습니다.
 
 ```csv
 stock_code,sector_name
@@ -427,3 +427,82 @@ git pull --ff-only origin main
 필요한 경우 현재 태그는 기존 `sector show 005930`, `sector show 000660` 명령으로 확인합니다. `summary`는 최신 성공 회차를 보여주므로 삼성전자·SK하이닉스가 그 회차의 상위 20종목에 없으면 해당 섹터 집계에 나타나지 않습니다.
 
 Windows Python 3.11 자동 테스트 정의는 `.github/workflows/windows-tests.yml`입니다. GitHub Actions에서 `Windows Python 3.11 tests` 실행 결과를 확인할 수 있습니다. 테스트는 API 키 없이 수행합니다.
+
+
+## 미분류 종목 CSV 작업 흐름 (Excel)
+
+기존 CLI는 `sector import 파일경로 --source "출처" --dry-run`입니다. 이번 기능은 이 구문과 DB 구조를 유지합니다. 새로 추가한 내보내기는 기존 `stocks`·`stock_sectors`의 **현재 태그가 한 개도 없는 종목**만 선택합니다. 최신 조회순위의 미분류 20개만 내보내는 것이 아니라 종목 마스터 전체가 대상입니다. 이미 한 개라도 태그가 있는 종목은 제외되지만 CSV에 그 종목을 직접 추가해 다른 태그를 연결할 수 있습니다.
+
+### 1. 업데이트 및 내보내기
+
+수집기를 종료하고 기존 README의 백업 절차로 DB를 백업합니다. `.env`, `data/stock1.db`는 그대로 두고 Git 프로젝트 폴더의 PowerShell에서 실행하세요.
+
+```powershell
+git pull --ff-only origin main
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+.\.venv\Scripts\python.exe -m kiwoom_collector sector export-untagged --output data/untagged.csv
+```
+
+내보낸 파일은 **UTF-8 BOM(`utf-8-sig`)**, 헤더는 다음과 같습니다.
+
+```csv
+stock_code,stock_name,sector_name
+005930,삼성전자,
+000660,SK하이닉스,
+```
+
+위 두 종목은 형식 설명용 예시입니다. 실제 파일에는 본인 DB의 미분류 종목만 종목코드순으로 출력합니다. 종목코드는 문자열 `005930` 그대로 내보내며 `="005930"` 같은 Excel 수식을 만들지 않습니다. 태그를 입력할 `sector_name`은 비워 둡니다. 종목명에 쉼표/따옴표가 있어도 표준 CSV 인용 규칙을 사용합니다. 미분류가 없으면 헤더만 출력하고 `row_count=0`을 표시합니다.
+
+출력 폴더는 없으면 생성합니다. **이미 존재하는 CSV는 덮어쓰지 않습니다.** 다시 내보낼 때는 편집본을 보존하고 `--output data/untagged-2.csv`처럼 다른 이름을 쓰세요. `.csv` 이외의 출력 경로는 거부하며 `.env`나 DB 파일을 덮어쓰지 않습니다. 태그/종목명/이력을 변경하지 않지만, 다른 섹터 관리 명령과 마찬가지로 DB를 여는 과정에서 필요한 기존 공통 마이그레이션은 실행될 수 있습니다. 이번 변경에 새 DB 테이블/열은 없습니다.
+
+### 2. Excel에서 종목코드를 텍스트로 가져오기
+
+CSV를 더블클릭하면 Excel이 `005930`을 숫자 `5930`으로 자동 변환할 수 있습니다. BOM은 한글 인코딩을 해결할 뿐 숫자 자동 변환은 막지 않습니다.
+
+1. 빈 Excel 통합 문서를 열고 **데이터 → 텍스트/CSV에서**로 파일을 선택합니다.
+2. 파일 원본을 **65001: Unicode (UTF-8)**, 구분 기호를 **쉼표**로 선택합니다.
+3. **데이터 변환**을 선택합니다. Power Query에서 자동 생성된 **변경된 유형(Changed Type)** 단계가 숫자 변환을 했다면 삭제합니다.
+4. `stock_code` 열의 데이터 형식을 **텍스트**로 지정한 뒤 닫기 및 로드합니다. `005930`, `000660`처럼 여섯 자리가 유지되는지 확인합니다. 이미 숫자로 바뀐 뒤 텍스트로 바꾸는 것만으로는 0이 복원되지 않으므로 그 경우 원본 CSV부터 다시 가져오세요.
+5. `sector_name`을 검토해 입력합니다. **stock_code·헤더는 바꾸지 마세요.** `stock_name`은 참고용이며 수정하더라도 종목 마스터나 과거 이름을 갱신하지 않습니다.
+6. **다른 이름으로 저장 → CSV UTF-8(쉼표로 분리)**로 `data/sector-tags-reviewed.csv`에 저장합니다. Excel을 닫아 저장 내용과 파일 잠금을 정리합니다.
+
+**한 행은 한 종목-한 섹터**입니다. 여러 태그는 같은 종목의 행을 복사하고 각 행에 다른 섹터를 적습니다.
+
+```csv
+stock_code,stock_name,sector_name
+005930,삼성전자,반도체
+005930,삼성전자,IT하드웨어
+000660,SK하이닉스,반도체
+```
+
+한 셀의 `반도체;AI`나 `반도체/AI`를 자동으로 분리하지 않습니다. 입력한 셀 전체가 한 섹터명입니다. 아직 분류하지 못한 종목은 **가져올 편집본에서 해당 행을 제거**하고 원본 내보내기 파일에는 남겨 두세요. 빈 `sector_name`은 기존과 같이 오류로 처리하며 조용히 건너뛰지 않습니다. 같은 종목-같은 섹터의 중복 행도 오류입니다. 행 제거는 DB 종목/태그 삭제를 뜻하지 않습니다.
+
+### 3. 사전 검증
+
+```powershell
+.\.venv\Scripts\python.exe -m kiwoom_collector sector import data/sector-tags-reviewed.csv --source "Excel 수동 검토" --dry-run
+if ($LASTEXITCODE -ne 0) { throw "CSV 검증 실패: 오류 행을 수정한 후 다시 검증하세요." }
+```
+
+`errors=[]`, `applied=false`, `dry_run=true`인지 확인하고 `new_sectors`, `added`, `updated`, `unchanged` 계획을 검토합니다. 앞자리 0이 지워진 코드, 미등록 종목, 빈 섹터명, 중복 행, 잘못된 헤더·열 수는 전체 적용을 막습니다. 출처는 실제로 확인한 내용을 적으세요. 예를 들어 본인이 자료를 검토했다면 `--source "인포스탁 참고·수동 검토"`로 기록할 수 있지만 시스템이 외부 내용을 확인하거나 섹터를 추정하지는 않습니다.
+
+기존 2열 CSV도 같은 명령으로 계속 사용합니다. 허용되는 헤더는 정확히 `stock_code,sector_name` 또는 `stock_code,stock_name,sector_name`이며 두 형식 모두 열 순서 변경은 허용합니다. 다른 열/중복 헤더는 오류입니다. 별도 변환 명령은 필요하지 않습니다.
+
+### 4. 실제 적용과 summary 확인
+
+검증 결과를 확인한 파일에 같은 출처를 지정해 적용합니다.
+
+```powershell
+.\.venv\Scripts\python.exe -m kiwoom_collector sector import data/sector-tags-reviewed.csv --source "Excel 수동 검토"
+.\.venv\Scripts\python.exe -m kiwoom_collector sector list
+.\.venv\Scripts\python.exe -m kiwoom_collector sector summary
+```
+
+실제 적용도 파일과 현재 DB를 **다시 전체 검증**합니다. 별도의 사전 검증 인증서를 저장하거나 기존 import 구문을 바꾸지는 않습니다. 따라서 사전 검증 후 Excel에서 코드가 변했거나 미등록 종목이 추가됐으면 실제 적용이 차단됩니다. 오류 시 새 섹터·태그·감사 이력 전체를 롤백합니다. 기존 수집 이력/종목명/다른 태그는 보존합니다.
+
+같은 출처의 동일 태그는 `unchanged`로 처리해 생성 시각·수정 시각·출처·감사 이력을 바꾸지 않습니다. **기존 연결에 다른 출처를 지정하면** 기존 동작대로 `updated`로 처리하고 이전 출처 이력은 감사 테이블에 보존합니다. 변경 계획을 사전 검증에서 확인하세요. 새 태그를 추가해도 해당 종목의 다른 기존 태그를 지우지 않습니다.
+
+`sector summary`는 현재 태그를 읽으므로 새 분류가 즉시 반영됩니다. 단, 그 종목이 **최신 성공 수집 회차의 상위 20종목에 포함**돼 있어야 집계에 나타납니다. CSV를 가져오기 위해 API를 새로 호출할 필요는 없습니다. 자동 테마 추정·점수 계산·주문 기능은 추가하지 않았습니다.
+
+`data` 아래의 CSV와 DB는 기존 Git 제외 규칙을 따릅니다. `.env`·API 키·토큰을 CSV에 넣거나 공유하지 마세요. 코드 업데이트는 기존 `.env`나 DB를 교체하지 않습니다.

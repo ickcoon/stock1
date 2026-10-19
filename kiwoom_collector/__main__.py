@@ -25,7 +25,12 @@ def main(argv=None) -> int:
     parser.add_argument("sector_args", nargs="*", help="sector 하위 명령 및 인자")
     parser.add_argument("--source", help="섹터 분류 출처 (기본 수동, CSV 가져오기는 CSV)")
     parser.add_argument("--dry-run", action="store_true", help="sector import: 검증만, 태그 저장 안 함")
+    parser.add_argument("--output", type=Path, help="sector export-untagged: 새 CSV 출력 경로 (덮어쓰기 금지)")
     args = parser.parse_args(argv)
+    if args.output is not None and not (args.command == "sector" and args.sector_args == ["export-untagged"]):
+        parser.error('--output은 sector export-untagged 전용입니다.')
+    if args.command == "sector" and args.sector_args == ["export-untagged"] and args.output is None:
+        parser.error('sector export-untagged에는 --output CSV경로가 필요합니다.')
     if args.command != "sector" and (args.sector_args or args.source is not None or args.dry_run):
         parser.error("섹터 인자와 --source/--dry-run은 sector 명령 전용입니다.")
     if args.test_now and args.command != "collect":
@@ -47,7 +52,7 @@ def main(argv=None) -> int:
         if args.command in {"status", "latest", "collect", "sector"}:
             store = Store(args.db)
         if args.command == "sector":
-            output, exit_code = sector_command(store, args.sector_args, args.source, args.dry_run)
+            output, exit_code = sector_command(store, args.sector_args, args.source, args.dry_run, args.output)
             print(json.dumps(output, ensure_ascii=False, indent=2))
             return exit_code
         if args.command == "status":

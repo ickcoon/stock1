@@ -143,14 +143,39 @@ class SectorManager:
             (SELECT 1 FROM stock_sectors t WHERE t.stock_code=k.stock_code) ORDER BY stock_code''')) as rows:
             return [dict(row) for row in rows]
 
+    def export_untagged(self, output):
+        path = Path(output).resolve()
+        if path.suffix.lower() != '.csv':
+            raise ValueError('--output은 .csv 파일 경로여야 합니다.')
+        rows = self.untagged()
+        path.parent.mkdir(parents=True, exist_ok=True)
+        try:
+            handle = path.open('x', encoding='utf-8-sig', newline='')
+        except FileExistsError:
+            raise ValueError('출력 파일이 이미 존재합니다. 편집본 보존을 위해 덮어쓰지 않습니다. 다른 CSV 파일명을 지정하세요.') from None
+        try:
+            with handle:
+                writer = csv.DictWriter(handle, fieldnames=['stock_code', 'stock_name', 'sector_name'])
+                writer.writeheader()
+                for row in rows:
+                    writer.writerow({'stock_code': row['stock_code'], 'stock_name': row['stock_name'], 'sector_name': ''})
+        except BaseException:
+            # Only remove the new file opened exclusively by this operation.
+            path.unlink()
+            raise
+        return {'output': str(path), 'row_count': len(rows), 'encoding': 'utf-8-sig',
+                'columns': ['stock_code', 'stock_name', 'sector_name']}
+
     def import_csv(self, path, source='CSV', dry_run=False):
         source = label(source, '출처')
         errors, pairs, seen = [], [], set()
         try:
             with Path(path).open(encoding='utf-8-sig', newline='') as handle:
                 reader = csv.DictReader(handle, strict=True)
-                if reader.fieldnames is None or len(reader.fieldnames) != 2 or set(reader.fieldnames) != {'stock_code', 'sector_name'}:
-                    raise ValueError('CSV 헤더는 stock_code,sector_name이어야 합니다.')
+                headers = reader.fieldnames
+                if headers is None or len(headers) != len(set(headers)) or set(headers) not in ({'stock_code', 'sector_name'}, {'stock_code', 'stock_name', 'sector_name'}):
+                    raise ValueError('CSV 헤더는 stock_code,sector_name 또는 stock_code,stock_name,sector_name이어야 합니다.')
+                # stock_name is for human review only; never overwrite the API-owned master name.
                 for row in reader:
                     line = reader.line_num
                     if None in row or any(value is None for value in row.values()):
@@ -200,18 +225,24 @@ class SectorManager:
         return report
 
 
-def sector_command(store, args, source=None, dry_run=False):
+def sector_command(store, args, source=None, dry_run=False, output=None):
     manager = SectorManager(store)
     if not args:
-        raise ValueError('sector add/tag/untag/show/list/untagged/import/summary 중 하나를 지정하세요.')
+        raise ValueError('sector add/tag/untag/show/list/untagged/import/export-untagged/summary 중 하나를 지정하세요.')
     action, *values = args
-    arities = {'add': 1, 'tag': 2, 'untag': 2, 'show': 1, 'list': 0, 'untagged': 0, 'import': 1}
+    arities = {'add': 1, 'tag': 2, 'untag': 2, 'show': 1, 'list': 0, 'untagged': 0, 'import': 1, 'export-untagged': 0}
     if action not in arities or len(values) != arities[action]:
         raise ValueError('sector 명령 인자가 잘못되었습니다. README의 명령 예시를 확인하세요.')
     if source is not None and action not in {'tag', 'untag', 'import'}:
         raise ValueError('--source는 sector tag/untag/import에서만 사용할 수 있습니다.')
     if dry_run and action != 'import':
         raise ValueError('--dry-run은 sector import에서만 사용할 수 있습니다.')
+    if output is not None and action != 'export-untagged':
+        raise ValueError('--output은 sector export-untagged에서만 사용할 수 있습니다.')
+    if action == 'export-untagged':
+        if output is None:
+            raise ValueError('sector export-untagged에는 --output CSV경로가 필요합니다.')
+        return manager.export_untagged(output), 0
     if action == 'import':
         report = manager.import_csv(values[0], source=source if source is not None else 'CSV', dry_run=dry_run)
         return report, 1 if report['errors'] else 0
