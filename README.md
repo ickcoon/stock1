@@ -389,3 +389,41 @@ print("복원 완료:", original)
 ```
 
 DB 구조·출처 이력의 상세 설명은 [DB 문서](docs/DATABASE.md)에 있습니다.
+
+
+## [0198] 섹터 군집 분석 MVP — sector summary
+
+```powershell
+.\.venv\Scripts\python.exe -m kiwoom_collector sector summary
+```
+
+이 명령은 **기존 DB를 읽기 전용으로 열고 조회만** 합니다. API 키·네트워크를 사용하지 않으며, DB 생성·마이그레이션·과거 관측·현재 태그 변경은 수행하지 않습니다. 다른 DB는 `sector summary --db 경로`로 지정합니다. DB/섹터 스키마가 없으면 안내 오류로 종료합니다. 업그레이드 전 DB라면 백업 후 `status`로 마이그레이션하고 다시 실행하세요.
+
+### 분석 대상 및 계산 규칙
+
+- `api_id='ka00198'`, `status='success'`인 회차 중 수집 시각이 가장 최근인 **한 회차**를 선택합니다. 이후 실패/빈 결과가 있어도 최신 성공 회차를 사용하므로 출력 시각을 꼭 확인하세요. 시각이 같으면 회차 rowid가 큰 것을 선택합니다.
+- 모의/실전, 집계 구분, 테스트 모드를 나누어 필터링하지 않고 최신 성공 회차를 선택합니다. `collection`에 KST 수집 시각·회차 ID·`environment`·`is_mock`·`test_mode`·`qry_tp`를 모두 표시합니다. 장외 테스트의 이전 기준 시각 데이터가 최신 성공 회차일 수도 있습니다.
+- 그 회차의 순위 1~20 기록만 사용합니다. 종목명은 **해당 회차 관측값**, 태그는 **분석 실행 당시 현재 태그**입니다. 과거 시점의 태그를 재현하는 분석은 아닙니다.
+- 섹터별 종목 수, 종목코드·관측명·조회순위 목록, 최상위 순위(가장 작은 순위), 상위 20종목 대비 비율을 출력합니다. 비율은 `섹터의 고유 종목 수 / 20 × 100`이며, 실제 관측이 20개 미만이어도 분모는 20입니다. `observed_record_count`로 실제 관측 수를 따로 확인하세요.
+- 한 종목의 모든 태그를 각 섹터 집계에 반영하므로 섹터별 종목 수의 합과 비율의 합이 전체 수/100%를 넘을 수 있습니다. `unique_stock_count`와 `tagged_unique_stock_count`는 종목코드 기준 고유 수이며 중복 계산하지 않습니다.
+- `unclassified_stocks`와 `unclassified_stock_count`는 코드가 있지만 태그가 없는 고유 종목 목록/수입니다. 코드 미제공·빈 코드 관측은 고유 종목이라고 추정하지 않고 `unidentified_records`·`unidentified_record_count`에 별도 표시합니다.
+- 섹터가 2종목 이상이면 `cluster_candidate=true`, `label="군집 후보"`입니다. 그 외에는 `단일 종목`으로 표시합니다. 결과는 종목 수 내림차순 → 최상위 순위 오름차순 → 섹터명 순으로 정렬합니다.
+- 성공 회차가 없으면 분석 대상 없음으로 표시하고 빈 결과를 반환합니다. 섹터 추론·주도섹터 판단·매매 신호·주문은 구현하지 않습니다.
+
+예를 들어 **실제로 선택된 회차에 삼성전자와 SK하이닉스가 모두 등장하고 두 종목에 반도체 태그가 있다면**, 반도체는 `stock_count=2`, `top20_ratio_percent=10.0`, `label="군집 후보"`로 출력됩니다. 현재 회차 포함 여부나 실제 순위는 DB 관측값에 따라 달라지며 임의로 채우지 않습니다.
+
+### Windows PowerShell 업데이트 및 실행
+
+수집기를 종료하고 README의 SQLite 백업 절차를 먼저 수행합니다.
+
+```powershell
+git switch main
+git pull --ff-only origin main
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+.\.venv\Scripts\python.exe -m kiwoom_collector sector summary
+```
+
+필요한 경우 현재 태그는 기존 `sector show 005930`, `sector show 000660` 명령으로 확인합니다. `summary`는 최신 성공 회차를 보여주므로 삼성전자·SK하이닉스가 그 회차의 상위 20종목에 없으면 해당 섹터 집계에 나타나지 않습니다.
+
+Windows Python 3.11 자동 테스트 정의는 `.github/workflows/windows-tests.yml`입니다. GitHub Actions에서 `Windows Python 3.11 tests` 실행 결과를 확인할 수 있습니다. 테스트는 API 키 없이 수행합니다.

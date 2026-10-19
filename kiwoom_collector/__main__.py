@@ -9,6 +9,7 @@ from pathlib import Path
 from .collector import collect, test_now
 from .storage import Store, DEFAULT_DB
 from .sectors import sector_command
+from .summary import sector_summary
 
 from .client import KiwoomClient, KiwoomError
 from .config import load_credentials
@@ -35,6 +36,14 @@ def main(argv=None) -> int:
     client = None
     store = None
     try:
+        # Route before Store construction: summary must never initialize/migrate a DB.
+        if args.command == "sector" and args.sector_args == ["summary"]:
+            if args.source is not None or args.dry_run:
+                raise ValueError('sector summary는 --source/--dry-run을 사용하지 않습니다.')
+            print(json.dumps(sector_summary(args.db), ensure_ascii=False, indent=2))
+            return 0
+        if args.command == "sector" and args.sector_args[:1] == ["summary"]:
+            raise ValueError('sector summary에는 추가 위치 인자를 지정할 수 없습니다.')
         if args.command in {"status", "latest", "collect", "sector"}:
             store = Store(args.db)
         if args.command == "sector":
