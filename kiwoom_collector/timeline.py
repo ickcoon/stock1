@@ -2,6 +2,7 @@
 from datetime import date
 
 from .schedule import SLOTS, slot_at
+from .classification import classify
 from .summary import read_database, _rows, _summarize
 
 
@@ -93,6 +94,8 @@ def sector_timeline(path, day, environment='mock', qry_tp='1'):
             item['previous_slot'] = SLOTS[index - 1] if index else None
             item['versus_previous'] = compare(current, summaries[SLOTS[index - 1]]) if index else {'available': False, 'reason': '첫 예정 시점'}
             if slot in {'13:00', '14:00', '15:00'}:
+                baseline_groups = list(_groups(summaries['09:40']).values()) if summaries['09:40'] is not None else None
+                item['classification'] = classify(item['sectors'] if current is not None else None, baseline_groups, item['versus_previous'])
                 item['versus_0940'] = compare(current, summaries['09:40'])
                 item['new_since_0940_clusters'] = [s for s in item['versus_0940'].get('sectors', []) if s['new_cluster']]
                 item['afternoon_new_clusters_available'] = item['versus_previous']['available']

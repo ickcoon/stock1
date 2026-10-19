@@ -13,6 +13,7 @@ from .sectors import sector_command
 from .summary import sector_summary
 from .schedule import collect_schedule, load_holidays, SLOTS
 from .timeline import sector_timeline
+from .dashboard import export_dashboard
 
 from .client import KST, KiwoomClient, KiwoomError
 from .config import load_credentials
@@ -28,11 +29,11 @@ def main(argv=None) -> int:
     parser.add_argument("sector_args", nargs="*", help="sector 하위 명령 및 인자")
     parser.add_argument("--source", help="섹터 분류 출처 (기본 수동, CSV 가져오기는 CSV)")
     parser.add_argument("--dry-run", action="store_true", help="sector import: 검증만, 태그 저장 안 함")
-    parser.add_argument("--output", type=Path, help="sector export-untagged: 새 CSV 출력 경로 (덮어쓰기 금지)")
+    parser.add_argument("--output", type=Path, help="sector export-untagged/dashboard: 새 CSV/HTML 출력 경로 (덮어쓰기 금지)")
     parser.add_argument('--schedule', action='store_true', help='collect: KST 하루 10회 고정 시간표')
     parser.add_argument('--holidays', type=Path, help='고정 일정용 KRX 휴장일 목록 파일')
-    parser.add_argument('--date', help='sector timeline: YYYY-MM-DD, 기본 KST 오늘')
-    parser.add_argument('--environment', choices=('mock', 'real'), default=None, help='sector timeline 분석 환경, 기본 mock')
+    parser.add_argument('--date', help='sector timeline/dashboard: YYYY-MM-DD, 기본 KST 오늘')
+    parser.add_argument('--environment', choices=('mock', 'real'), default=None, help='sector timeline/dashboard 분석 환경, 기본 mock')
     args = parser.parse_args(argv)
     if (args.schedule or args.holidays) and args.command != 'collect':
         parser.error('--schedule/--holidays는 collect 전용입니다.')
@@ -40,11 +41,11 @@ def main(argv=None) -> int:
         parser.error('--holidays는 --schedule과 함께 사용하세요.')
     if args.schedule and (args.test_now or args.interval is not None):
         parser.error('--schedule은 --test-now/--interval과 함께 사용할 수 없습니다.')
-    if (args.date is not None or args.environment is not None) and not (args.command == 'sector' and args.sector_args == ['timeline']):
-        parser.error('--date/--environment는 sector timeline 전용입니다.')
+    if (args.date is not None or args.environment is not None) and not (args.command == 'sector' and args.sector_args in (['timeline'], ['dashboard'])):
+        parser.error('--date/--environment는 sector timeline/dashboard 전용입니다.')
     args.interval = 300 if args.interval is None else args.interval
-    if args.output is not None and not (args.command == "sector" and args.sector_args == ["export-untagged"]):
-        parser.error('--output은 sector export-untagged 전용입니다.')
+    if args.output is not None and not (args.command == "sector" and args.sector_args in (["export-untagged"], ["dashboard"])):
+        parser.error('--output은 sector export-untagged/dashboard 전용입니다.')
     if args.command == "sector" and args.sector_args == ["export-untagged"] and args.output is None:
         parser.error('sector export-untagged에는 --output CSV경로가 필요합니다.')
     if args.command != "sector" and (args.sector_args or args.source is not None or args.dry_run):
@@ -53,10 +54,18 @@ def main(argv=None) -> int:
         parser.error("--test-now는 collect 명령에서만 사용할 수 있습니다.")
     if args.command == "collect" and not args.test_now and args.interval < 60:
         parser.error("--interval은 60초 이상이어야 합니다.")
+    if args.command == 'sector' and args.sector_args == ['dashboard'] and args.output is None:
+        parser.error('sector dashboard에는 --output HTML경로가 필요합니다.')
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
     client = None
     store = None
     try:
+        if args.command == 'sector' and args.sector_args[:1] == ['dashboard']:
+            if args.sector_args != ['dashboard'] or args.source is not None or args.dry_run:
+                raise ValueError('sector dashboard 인자를 확인하세요.')
+            output = export_dashboard(args.db, args.date or datetime.now(KST).date().isoformat(), args.environment or 'mock', args.qry_tp, args.output)
+            print(json.dumps(output, ensure_ascii=False, indent=2))
+            return 0
         if args.command == 'sector' and args.sector_args[:1] == ['timeline']:
             if args.sector_args != ['timeline'] or args.source is not None or args.dry_run:
                 raise ValueError('sector timeline 인자를 확인하세요. --date/--environment/--qry-tp/--db만 사용합니다.')
