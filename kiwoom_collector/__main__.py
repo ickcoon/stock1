@@ -14,52 +14,123 @@ from .summary import sector_summary
 from .schedule import collect_schedule, load_holidays, SLOTS
 from .timeline import sector_timeline
 from .dashboard import export_dashboard
+from .conditions import ConditionClient, fetch_conditions, condition_report
+from .external_tags import external_command, is_external_csv
 
 from .client import KST, KiwoomClient, KiwoomError
 from .config import load_credentials
 
 
+def validate_cli(parser, args):
+    """One option policy for every command, before any file/DB/network access."""
+    arities = {
+        'sector add': 1, 'sector tag': 2, 'sector untag': 2, 'sector show': 1,
+        'sector list': 0, 'sector untagged': 0, 'sector import': 1,
+        'sector export-untagged': 0, 'sector summary': 0, 'sector timeline': 0,
+        'sector dashboard': 0, 'sector export-priority': 0, 'sector provenance': 1,
+        'sector import-report': 1, 'sector alias add': 2, 'sector alias list': 0,
+        'condition list': 0, 'condition fetch': 0, 'condition report': 0,
+    }
+    key = args.command
+    values = args.sector_args
+    if args.command in {'sector', 'condition'}:
+        prefix = 2 if args.command == 'sector' and values[:1] == ['alias'] else 1
+        key = ' '.join([args.command, *values[:prefix]])
+        if key not in arities or len(values[prefix:]) != arities[key]:
+            parser.error('하위 명령/인자 수를 확인하세요. sector: add/tag/untag/show/list/untagged/import/'
+                         'export-untagged/export-priority/provenance/import-report/alias add/alias list/'
+                         'summary/timeline/dashboard; condition: list/fetch/report')
+    elif values:
+        parser.error('추가 위치 인자는 sector/condition 하위 명령에서만 사용합니다.')
+    policy = {
+        'environment': {'sector timeline', 'sector dashboard', 'sector export-priority',
+                        'sector import', 'condition report'},
+        'output': {'sector export-untagged', 'sector export-priority', 'sector dashboard', 'sector import-report'},
+        'date': {'sector timeline', 'sector dashboard'},
+        'source': {'sector tag', 'sector untag', 'sector import', 'sector alias add'},
+        'dry_run': {'sector import'},
+        'observed_at': {'sector import'}, 'terms_url': {'sector import'},
+        'terms_note': {'sector import'}, 'terms_checked_at': {'sector import'},
+        'interval': {'collect'}, 'schedule': {'collect'}, 'test_now': {'collect'},
+        'holidays': {'collect'}, 'qry_tp': {'once', 'collect', 'sector timeline', 'sector dashboard'},
+    }
+    for field, allowed in policy.items():
+        value = getattr(args, field)
+        if value is not None and value is not False and key not in allowed:
+            parser.error('--' + field.replace('_', '-') + ' 지원 명령: ' + ', '.join(sorted(allowed)))
+    if key in {'sector export-untagged', 'sector export-priority', 'sector dashboard'} and args.output is None:
+        parser.error(key + '에는 --output이 필요합니다.')
+    if args.holidays is not None and not args.schedule:
+        parser.error('--holidays는 collect --schedule과 함께 사용하세요.')
+    if args.schedule and (args.test_now or args.interval is not None):
+        parser.error('--schedule은 --test-now/--interval과 함께 사용할 수 없습니다.')
+    if args.interval is not None and args.interval < 60:
+        parser.error('--interval은 60초 이상이어야 합니다.')
+    args.interval = 300 if args.interval is None else args.interval
+    args.qry_tp = args.qry_tp or '1'
+    return key
+
+
 def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(description="키움 조회순위 수집 및 SQLite 이력 조회")
-    parser.add_argument("command", choices=("check-config", "auth", "once", "collect", "status", "latest", "sector"), nargs="?", default="check-config")
-    parser.add_argument("--qry-tp", choices=("1", "2", "3", "4", "5"), default="1", help="1:1분, 2:10분, 3:1시간, 4:당일 누적, 5:30초")
+    parser = argparse.ArgumentParser(
+        description="키움 조회순위 수집 및 SQLite 이력 조회",
+        epilog="sector: add/tag/untag/show/list/untagged/import/export-untagged/export-priority/"
+               "provenance/import-report/alias add/alias list/summary/timeline/dashboard; "
+               "condition: list/fetch/report")
+    parser.add_argument("command", choices=("check-config", "auth", "once", "collect", "status", "latest", "sector", "condition"), nargs="?", default="check-config")
+    parser.add_argument("--qry-tp", choices=("1", "2", "3", "4", "5"), default=None, help="1:1분, 2:10분, 3:1시간, 4:당일 누적, 5:30초")
     parser.add_argument("--interval", type=int, default=None, metavar="SECONDS", help="수집 간격(초), 기본 300, 최소 60")
     parser.add_argument("--db", type=Path, default=DEFAULT_DB, help="SQLite 파일 경로")
     parser.add_argument("--test-now", action="store_true", help="collect 전용: 시간 제한 없이 조회 1회 저장 후 종료")
-    parser.add_argument("sector_args", nargs="*", help="sector 하위 명령 및 인자")
+    parser.add_argument("sector_args", nargs="*", help="sector 또는 condition 하위 명령 및 인자")
     parser.add_argument("--source", help="섹터 분류 출처 (기본 수동, CSV 가져오기는 CSV)")
     parser.add_argument("--dry-run", action="store_true", help="sector import: 검증만, 태그 저장 안 함")
-    parser.add_argument("--output", type=Path, help="sector export-untagged/dashboard: 새 CSV/HTML 출력 경로 (덮어쓰기 금지)")
+    parser.add_argument("--output", type=Path, help="sector export-untagged/export-priority/dashboard/import-report: 새 CSV/HTML/JSON 경로")
     parser.add_argument('--schedule', action='store_true', help='collect: KST 하루 10회 고정 시간표')
     parser.add_argument('--holidays', type=Path, help='고정 일정용 KRX 휴장일 목록 파일')
     parser.add_argument('--date', help='sector timeline/dashboard: YYYY-MM-DD, 기본 KST 오늘')
-    parser.add_argument('--environment', choices=('mock', 'real'), default=None, help='sector timeline/dashboard 분석 환경, 기본 mock')
-    args = parser.parse_args(argv)
-    if (args.schedule or args.holidays) and args.command != 'collect':
-        parser.error('--schedule/--holidays는 collect 전용입니다.')
-    if args.holidays and not args.schedule:
-        parser.error('--holidays는 --schedule과 함께 사용하세요.')
-    if args.schedule and (args.test_now or args.interval is not None):
-        parser.error('--schedule은 --test-now/--interval과 함께 사용할 수 없습니다.')
-    if (args.date is not None or args.environment is not None) and not (args.command == 'sector' and args.sector_args in (['timeline'], ['dashboard'])):
-        parser.error('--date/--environment는 sector timeline/dashboard 전용입니다.')
-    args.interval = 300 if args.interval is None else args.interval
-    if args.output is not None and not (args.command == "sector" and args.sector_args in (["export-untagged"], ["dashboard"])):
-        parser.error('--output은 sector export-untagged/dashboard 전용입니다.')
-    if args.command == "sector" and args.sector_args == ["export-untagged"] and args.output is None:
-        parser.error('sector export-untagged에는 --output CSV경로가 필요합니다.')
-    if args.command != "sector" and (args.sector_args or args.source is not None or args.dry_run):
-        parser.error("섹터 인자와 --source/--dry-run은 sector 명령 전용입니다.")
-    if args.test_now and args.command != "collect":
-        parser.error("--test-now는 collect 명령에서만 사용할 수 있습니다.")
-    if args.command == "collect" and not args.test_now and args.interval < 60:
-        parser.error("--interval은 60초 이상이어야 합니다.")
-    if args.command == 'sector' and args.sector_args == ['dashboard'] and args.output is None:
-        parser.error('sector dashboard에는 --output HTML경로가 필요합니다.')
+    parser.add_argument('--environment', choices=('mock', 'real'), default=None, help='sector timeline/dashboard/export-priority/import 또는 condition report의 관측 환경, 기본 mock; API 서버는 .env에서 선택')
+    parser.add_argument('--observed-at', help='외부 테마 확인일 YYYY-MM-DD')
+    parser.add_argument('--terms-url', help='사용자가 확인한 출처 이용조건 URL (접속 안 함)')
+    parser.add_argument('--terms-note', help='이용조건 확인 메모')
+    parser.add_argument('--terms-checked-at', help='이용조건 확인일 YYYY-MM-DD')
+    # Without subparsers, intermixing supports options before/between/after positionals.
+    args = parser.parse_intermixed_args(argv)
+    command_key = validate_cli(parser, args)
+    external_options = any(v is not None for v in (args.observed_at, args.terms_url, args.terms_note, args.terms_checked_at))
+    external_action = command_key in {'sector export-priority', 'sector alias add', 'sector alias list',
+                                      'sector provenance', 'sector import-report'}
     logging.basicConfig(level=logging.INFO, format="%(levelname)s: %(message)s")
+    condition_client = None
     client = None
     store = None
     try:
+        external_import = args.command == 'sector' and args.sector_args[:1] == ['import'] and (
+            external_options or args.environment is not None or is_external_csv(args.sector_args[1]))
+        if external_action or external_import:
+            report, code = external_command(args.db,args.sector_args,source=args.source,
+                observed_at=args.observed_at,terms_link=args.terms_url,terms_note=args.terms_note,
+                terms_checked_at=args.terms_checked_at,dry_run=args.dry_run,
+                environment=args.environment or 'mock',output=args.output)
+            print(json.dumps(report,ensure_ascii=False,indent=2))
+            return code
+        if args.command == 'condition':
+            if args.sector_args not in (['list'], ['fetch'], ['report']):
+                raise ValueError('condition list/fetch/report 중 하나를 지정하세요.')
+            if args.source is not None or args.dry_run or args.date is not None:
+                raise ValueError('condition은 --source/--dry-run/--date를 사용하지 않습니다.')
+            if args.sector_args == ['report']:
+                print(json.dumps(condition_report(args.db, args.environment or 'mock'), ensure_ascii=False, indent=2))
+                return 0
+            credentials = load_credentials()
+            condition_client = ConditionClient(credentials)
+            condition_client.open()
+            if args.sector_args == ['list']:
+                print(json.dumps({'environment': credentials.environment, 'conditions': condition_client.scrub(condition_client.definitions())}, ensure_ascii=False, indent=2))
+                return 0
+            batch_id, failed = fetch_conditions(args.db, condition_client)
+            print(json.dumps(condition_report(args.db, credentials.environment, batch_id), ensure_ascii=False, indent=2))
+            return 1 if failed else 0
         if args.command == 'sector' and args.sector_args[:1] == ['dashboard']:
             if args.sector_args != ['dashboard'] or args.source is not None or args.dry_run:
                 raise ValueError('sector dashboard 인자를 확인하세요.')
@@ -160,6 +231,8 @@ def main(argv=None) -> int:
         print("사용자가 중단했습니다.", file=sys.stderr)
         return 130
     finally:
+        if condition_client is not None:
+            condition_client.close()
         if client is not None:
             client.close()
         if store is not None:

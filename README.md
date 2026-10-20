@@ -299,7 +299,7 @@ stock_code,sector_name
 035420,인터넷
 ```
 
-같은 종목의 서로 다른 섹터는 허용합니다. **같은 종목-섹터 쌍의 중복 행**, 잘못된 코드, 미등록 종목, 빈 섹터명/잘못된 열은 오류입니다. 한 행이라도 오류가 있으면 파일 전체를 적용하지 않습니다. 줄 번호별 오류를 표시하고 종료 코드 1을 반환합니다. DB에 이미 있는 동일 출처의 연결은 `unchanged`, 출처가 바뀌면 `updated`로 처리합니다. CSV에 등장한 새 섹터는 저장 단계에서 자동 생성합니다.
+같은 종목의 서로 다른 섹터는 허용합니다. **같은 종목-섹터 쌍의 중복 행**, 잘못된 코드, 미등록 종목, 빈 섹터명/잘못된 열은 오류입니다. 한 행이라도 오류가 있으면 파일 전체를 적용하지 않습니다. 줄 번호별 오류를 표시하고 종료 코드 1을 반환합니다. DB에 이미 있는 동일 출처의 연결은 `unchanged`입니다. 다른 출처의 기존 연결은 덮어쓰지 않으며 `conflicts`와 오류를 표시합니다. 아래 외부 자료 가져오기 방식으로 확인일·이용조건을 제공하면 새 출처의 근거를 추가할 수 있습니다. CSV에 등장한 새 섹터는 저장 단계에서 자동 생성합니다.
 
 먼저 검증만 실행합니다.
 
@@ -501,7 +501,7 @@ if ($LASTEXITCODE -ne 0) { throw "CSV 검증 실패: 오류 행을 수정한 후
 
 실제 적용도 파일과 현재 DB를 **다시 전체 검증**합니다. 별도의 사전 검증 인증서를 저장하거나 기존 import 구문을 바꾸지는 않습니다. 따라서 사전 검증 후 Excel에서 코드가 변했거나 미등록 종목이 추가됐으면 실제 적용이 차단됩니다. 오류 시 새 섹터·태그·감사 이력 전체를 롤백합니다. 기존 수집 이력/종목명/다른 태그는 보존합니다.
 
-같은 출처의 동일 태그는 `unchanged`로 처리해 생성 시각·수정 시각·출처·감사 이력을 바꾸지 않습니다. **기존 연결에 다른 출처를 지정하면** 기존 동작대로 `updated`로 처리하고 이전 출처 이력은 감사 테이블에 보존합니다. 변경 계획을 사전 검증에서 확인하세요. 새 태그를 추가해도 해당 종목의 다른 기존 태그를 지우지 않습니다.
+같은 출처의 동일 태그는 `unchanged`로 처리해 생성 시각·수정 시각·출처·감사 이력을 바꾸지 않습니다. **기존 연결에 다른 출처를 지정하면** 덮어쓰기를 막고 `conflicts`와 오류를 표시합니다. 외부 자료는 아래 확인일·이용조건이 있는 가져오기 방식으로 근거를 추가하세요. 새 태그를 추가해도 해당 종목의 다른 기존 태그를 지우지 않습니다.
 
 `sector summary`는 현재 태그를 읽으므로 새 분류가 즉시 반영됩니다. 단, 그 종목이 **최신 성공 수집 회차의 상위 20종목에 포함**돼 있어야 집계에 나타납니다. CSV를 가져오기 위해 API를 새로 호출할 필요는 없습니다. 자동 테마 추정·점수 계산·주문 기능은 추가하지 않았습니다.
 
@@ -661,6 +661,208 @@ HTML은 **생성 순간의 정적 보고서**입니다. 새 수집/태그 수정
 
 화면에서 원래 수·순위·진입/이탈은 **관측값**, 강화/유지/약화와 후보 분류는 **규칙 판정**으로 명시합니다. 수집 없는 셀은 `missing`이며, 실패/빈 수집도 각 상태를 유지하고 차트를 연결하지 않습니다. 성공한 관측에서 태그가 없는 경우의 실제 0과 구분합니다. 가격 상승률·거래대금은 여전히 미검증이며 해당 값으로 매매 신호를 판정하지 않습니다.
 
-향후 외부 분류를 연결할 때 기존 `stock_sectors` 다대다 구조와 `source`·`updated_at`을 재사용할 수 있도록 분석의 섹터 출력에 `tag_assignments`를 추가했습니다. 각 항목은 `stock_code,source,updated_at`으로 구성되며, HTML의 '분류 출처·수정 시각'에서 확인할 수 있습니다. 현재 출처는 사용자가 기록한 문구이며 외부 서비스가 검증됐다는 뜻은 아닙니다. 향후 공급자별 식별자/분류 기준일/수동 태그 우선순위 정책은 별도로 설계해야 합니다. 이번에는 외부 수집·자동 테마 추정·스키마 변경을 하지 않습니다.
+향후 외부 분류를 연결할 때 기존 `stock_sectors` 다대다 구조와 `source`·`updated_at`을 재사용할 수 있도록 분석의 섹터 출력에 `tag_assignments`를 추가했습니다. 각 항목은 `stock_code,source,updated_at`으로 구성되며, HTML의 '분류 출처·수정 시각'에서 확인할 수 있습니다. 현재 출처는 사용자가 기록한 문구이며 외부 서비스가 검증됐다는 뜻은 아닙니다. 외부 자료의 확인일·다중 출처 근거·이용조건 기록은 아래 외부 CSV 기능에서 관리합니다. 외부 자동 수집·자동 테마 추정은 하지 않습니다.
 
 기존 수집 프로세스의 중지·재시작은 필요하지 않습니다. 별도 PowerShell에서 테스트와 새 HTML 생성을 실행할 수 있습니다. HTML 생성은 기존과 같이 읽기 전용 연결을 사용하고 기존 보고서를 덮어쓰지 않습니다.
+
+## HTS 조건검색 1단계: 목록 조회·일반 검색 저장
+
+`condition list`와 `condition fetch`를 **직접 실행할 때만** 인증 및 WebSocket API를 호출합니다. 기존 `collect`/고정 시간표는 조건검색을 호출하지 않습니다. 실시간 편입·이탈 구독, 주문, 자동매매는 없습니다.
+
+| 내부 이름 | HTS에 저장된 정확한 이름 |
+| --- | --- |
+| `sector_seed` | 주도주종베 |
+| `sector_cross` | 당일주도주(상따겸용) |
+| `independent_high` | 끼도주 |
+
+매번 `ka10171` 목록을 받아 이름을 정확히 매핑합니다. 세 이름 중 누락·중복이 있으면 일반 검색과 DB 저장을 시작하지 않습니다. 이름의 공백·괄호도 일치해야 합니다. `seq`는 서버 반환값을 사용하며 고정하지 않습니다. 식별자의 주변 공백은 제거하되 원래 `raw_seq`도 보존합니다. API 목록으로 조건식 내부 수식까지 검증하지는 못하므로 HTS 설정도 확인하세요.
+
+Windows 프로젝트 폴더의 PowerShell에서 다음 순서로 실행하세요. 기존 `.env`, `data/stock1.db`를 복사·덮어쓰기·삭제하지 않습니다. Git 체크아웃이라면 먼저 `git status`로 로컬 변경을 확인하고, 배포된 변경을 `git pull --ff-only`로 적용하세요. ZIP 사용자는 수정된 소스·테스트·문서·`requirements.txt`만 적용하고 `.env`와 `data` 폴더는 유지하세요. DB 백업은 위의 SQLite backup 절차를 사용합니다.
+
+```powershell
+# 1. 새 WebSocket 의존성 설치
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+
+# 2. 실제 API 호출 없이 전체 테스트
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+
+# 3. 설정 확인 (키 값 출력/API 호출 없음)
+.\.venv\Scripts\python.exe -m kiwoom_collector check-config
+
+# 4. 여기부터 실제 인증/API 호출: 저장 조건식 이름과 seq 확인 (DB 쓰기 없음)
+.\.venv\Scripts\python.exe -m kiwoom_collector condition list
+
+# 5. 세 조건식 일반 검색 및 SQLite 저장
+.\.venv\Scripts\python.exe -m kiwoom_collector condition fetch
+$LASTEXITCODE
+
+# 6. 이후는 DB만 읽음: 기본 mock 환경의 최근 조건검색 배치
+.\.venv\Scripts\python.exe -m kiwoom_collector condition report --environment mock
+```
+
+다른 DB를 지정하려면 각 명령에 `--db data/stock1.db`를 추가합니다. API 환경은 기존 `.env`의 `KIWOOM_ENV`로 선택하고 기본은 `mock`입니다. `report --environment real`은 저장된 실전 데이터만 읽는 필터이며 서버를 호출하거나 `.env`를 변경하지 않습니다. 모의 키를 실전 서버에 사용하지 마세요.
+
+**모의투자 조건검색 지원은 아직 실제 검증되지 않았습니다.** 공식 명세에 모의 WebSocket 도메인은 있으나 기능 지원을 확정하지 않습니다. `8104` 수신 시 `모의투자 미지원`을 표시하고 자동 실전 전환하지 않습니다. 다른 API 오류는 숫자 코드와 환경을 표시합니다. 동시 연결 수·조건검색 호출 제한 수치는 미확인입니다. 요청을 순차 처리하고 최소 1초 간격을 두는 것은 프로그램 자체 정책이며 공식 한도 준수를 보증하는 수치는 아닙니다. 현재 수집기를 종료·재시작하는 동작은 없지만, 같은 키의 추가 서버 연결이 기존 접속에 미치는 영향은 공식 제한 확인이 필요합니다.
+
+`fetch`는 배치 ID 하나에 세 검색 회차를 만듭니다. 정상 실행 시 세 조건식 각각의 전체 페이지를 받은 뒤 저장하며 성공 코드는 0입니다. 검색 실패 시 종료 코드 1이며, 해당 회차의 실패 원인과 받은 안전한 응답을 보존하고 나머지 회차는 `앞선 검색 실패로 실행하지 않음`으로 기록합니다. 부분 페이지의 종목은 완료 결과로 저장하지 않습니다. Ctrl+C는 미완료 회차를 `interrupted`로 기록하고 연결·DB를 닫습니다. 인증·목록·이름 매핑 단계에서 실패하면 검색 회차가 생성되기 전이므로 콘솔에만 오류가 남습니다. 재실행은 새 배치로 누적됩니다.
+
+추가 테이블은 `condition_definitions`, `condition_runs`, `condition_members`입니다. 기존 조회순위 기록·일정·섹터 태그·태그 이력을 삭제하거나 재작성하지 않습니다. 기존 DB 초기화/마이그레이션 경로를 재사용하고 조건검색 테이블은 별도 트랜잭션으로 추가합니다. 이름이 있는 새 주식은 종목 마스터에 등록하되 기존 종목명·수동 태그는 변경하지 않습니다. 회차에서 관측한 이름은 조건검색 기록에 별도로 남습니다. 이름이 없으면 임의 이름을 생성하지 않습니다.
+
+보존하는 원본은 **공식 응답 필드의 원래 문자열 값과 페이지 구조**입니다. `return_msg`, 인증 프레임, 토큰, 헤더, 미확인 필드는 보안상 저장하지 않으며 알려진 인증정보 문자열도 마스킹합니다. 중복 원본 행은 `response_json`에 남고, 정규화 멤버는 회차 내 종목코드로 중복 제거합니다. `A005930`은 문자열 `005930`으로 저장하고, ELW/ETN의 `J`/`Q` 접두어는 코드 충돌을 막기 위해 유지합니다. 가격·등락률의 임의 변환이나 조건검색 결과의 순위 생성은 하지 않습니다.
+
+`report` 검증 항목:
+
+- `complete_batch`: 세 검색이 모두 `success` 또는 `empty`인지 확인. 실패를 과거 성공으로 대체하지 않습니다.
+- `conditions`: 조건식별 식별자, 관측 시각, 상태, 고유 종목 수(`record_count`), 회차 내 중복 원본 행 수(`duplicate_count`), 종목·미분류·섹터 목록.
+- `unique_stock_count`: 완료된 검색 결과의 합집합 고유 종목 수. 실패한 검색은 합집합 범위에 포함하지 않습니다.
+- `cross_condition_duplicate_stock_count`/`duplicate_stocks`: 2개 이상 조건식에 등장한 고유 종목 수와 출현 조건식.
+- `unclassified_stocks`: 결과 합집합 중 현재 섹터 태그가 없는 종목. 섹터는 자동 추론하지 않습니다.
+- `sectors`: 합집합 내 섹터별 고유 종목 수. 다중 태그로 섹터 간에는 같은 종목이 포함될 수 있습니다.
+- `ranking_intersections`: 조건식별로 **같은 환경·같은 KST 날짜이며 검색 요청 시각 이전**의 최신 [0198] 시도를 확인합니다. 테스트 회차는 제외합니다. 해당 시도가 성공했을 때만 교집합을 계산하고 관측 시차(`age_seconds`)·조회 구분(`qry_tp`)을 표시합니다. 실패·빈 결과·미수집은 `stocks=null`이며 0건으로 판단하지 않습니다. 시차가 길면 동시 관측으로 해석하지 마세요. 세 조건식도 순차 조회이므로 서로 관측 시각이 다릅니다.
+
+DB 조회는 읽기 전용 연결에서 일관된 스냅샷으로 수행하며 `.env`나 키가 없어도 됩니다. 최초 조건검색 저장 전에는 스키마/이력 없음 오류를 내고 DB를 생성하지 않습니다. 미분류 종목의 이름이 마스터에 등록되었다면 기존 `sector export-untagged` → CSV 편집 → `sector import ... --dry-run` → `sector import ...` 흐름을 재사용할 수 있습니다. 이 내보내기는 전체 마스터의 미분류 목록이며 조건검색 결과만으로 제한하지 않습니다.
+
+실제 검증에서는 HTS와 각 조건식 결과의 종목코드를 비교하고, `complete_batch`, 미분류 목록, 중복 수, 교집합의 시차를 확인하세요. 검색 시점 차이로 결과가 달라질 수 있습니다. 검색 결과는 조건 충족 관측이며 주도섹터 확정이나 매수 신호가 아닙니다.
+
+## 외부 테마 CSV 통합: 출처별 근거와 분류 작업 우선순위
+
+핀업·인포스탁 등의 자료를 **사용자가 직접 확인하고 사용 가능한 범위에서 작성한 CSV**를 가져옵니다. 사이트에 접속하거나 자동 스크래핑하지 않으며 해당 서비스의 이용 허가를 프로그램이 보증하지 않습니다. 실제 이용조건 URL, 확인일, 허용 범위·제한에 대한 메모를 사용자가 기록합니다. 예제 URL을 실제 서비스의 약관으로 간주하지 마세요.
+
+추가 기능은 로컬 파일·SQLite만 사용합니다. 기존 [0198] 하루 10회 일정, API 호출, 조건검색 동작, 과거 수집 기록은 변경하지 않습니다. 종목·태그는 모의/실전이 공유하는 분류 마스터이며 `--environment`는 우선순위·전후 비교에 사용할 관측 이력만 구분합니다.
+
+### 1. 미분류 우선순위 CSV 내보내기
+
+프로젝트 폴더의 Windows PowerShell에서 실행하세요. 기존 `.env`, `data/stock1.db`를 덮어쓰거나 삭제하지 않습니다. DB 백업은 위의 SQLite backup 절차를 사용하세요.
+
+```powershell
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+
+.\.venv\Scripts\python.exe -m kiwoom_collector sector export-priority --environment mock --output data/priority-untagged.csv
+```
+
+대상은 지정 환경의 **전체 성공 [0198] 이력과 성공한 조건검색 회차에 등장한 종목의 합집합** 중 현재 태그가 없는 종목입니다. 최신 시점만의 목록은 아닙니다. 테스트 회차, 오류/미완료 검색, 지원하지 않는 코드 형식은 제외하고 종목코드당 한 행만 출력합니다. 정렬은 양쪽 데이터 출현 여부 → 출현 조건식 종류 수 → 총 출현 회차 수 → 최고 조회순위 → 코드입니다. 분류 작업을 위한 우선순위이며 투자 점수가 아닙니다. 콘솔 JSON의 `priorities`에 출현 횟수·조건식·마스터 등록 여부를 표시합니다. 미완료 조건검색의 부분 결과를 성공 데이터처럼 사용하지 않습니다.
+
+CSV는 기존 내보내기와 같은 `stock_code,stock_name,sector_name` 3열, UTF-8 BOM입니다. 위에서 설명한 Excel **데이터 → 텍스트/CSV 가져오기 → 종목코드를 텍스트 형식으로 지정**하는 절차를 사용하세요. CSV를 더블클릭해 열면 BOM이 있어도 앞자리 0이 사라질 수 있습니다. 모든 내보내기는 기존 파일을 덮어쓰지 않습니다.
+
+직접 확인한 테마를 `sector_name`에 입력하고 `data/themes-reviewed.csv`로 저장합니다. 한 종목에 여러 테마가 있으면 행을 추가하세요. 기존 `sector export-untagged`는 계속 전체 종목 마스터의 미분류 목록을 내보냅니다.
+
+### 2. 표기 차이는 명시적인 별칭으로 관리
+
+```powershell
+.\.venv\Scripts\python.exe -m kiwoom_collector sector add "이차전지"
+.\.venv\Scripts\python.exe -m kiwoom_collector sector alias add "2차전지" "이차전지" --source "핀업"
+.\.venv\Scripts\python.exe -m kiwoom_collector sector alias list
+```
+
+출처별 별칭을 우선 적용하고, 출처를 생략한 전역 별칭(`source="*"`)을 그다음 적용합니다. 공백 제거 외에 유사 문자열/동의어를 자동 추론하지 않습니다. 정식 섹터는 먼저 생성해야 합니다. 별칭의 대상 변경, 기존 섹터의 자동 병합·재태깅은 지원하지 않습니다. 잘못 연결된 별칭은 DB를 임의 수정하지 말고 별도 정정 절차를 설계한 뒤 처리하세요. 입력 테마명과 실제 연결한 정식 섹터는 근거에 각각 남습니다. 일반 CSV 가져오기에도 출처에 맞는 별칭을 적용합니다.
+
+### 3. 기존 CSV에 메타데이터를 옵션으로 제공하여 dry-run
+
+기존 2열 또는 3열 CSV를 그대로 재사용할 수 있습니다. 다음 값은 예제가 아니라 **직접 확인한 실제 값**을 입력해야 합니다. 확인일은 자료를 실제로 확인한 날짜이며 자동 생성하지 않습니다.
+
+```powershell
+$themeSource = "핀업"
+$observedAt = Read-Host "테마 구성을 직접 확인한 날짜 (YYYY-MM-DD)"
+$termsUrl = Read-Host "직접 확인한 해당 서비스 이용조건 URL (https://...)"
+$termsNote = Read-Host "이용 범위와 제한에 대한 확인 메모"
+$termsCheckedAt = Read-Host "이용조건을 확인한 날짜 (YYYY-MM-DD)"
+
+$importArgs = @(
+  "sector", "import", "data/themes-reviewed.csv",
+  "--source", $themeSource,
+  "--observed-at", $observedAt,
+  "--terms-url", $termsUrl,
+  "--terms-note", $termsNote,
+  "--terms-checked-at", $termsCheckedAt,
+  "--environment", "mock"
+)
+
+.\.venv\Scripts\python.exe -m kiwoom_collector @importArgs --dry-run
+$LASTEXITCODE
+```
+
+`errors=[]`인지 확인하고 `counts`/`new_tags`/`existing_tags`/`new_evidence`/`existing_evidence`/`new_stocks`/`conflicts`를 검토하세요.
+
+- `new_tags`/`existing_tags`: 종목-정식 테마 연결 기준 목록과 고유 연결 수입니다. 한 연결에 여러 출처·확인일이 있어도 신규 연결은 한 번만 셉니다.
+- `new_evidence`/`existing_evidence`: 종목-정식 테마-출처-확인일 기준입니다. 다른 출처나 다른 날짜의 확인은 추가 근거가 됩니다.
+- `additional_source`: 같은 태그에 다른 출처가 존재한다는 검토 정보입니다. 기존 태그의 출처·생성일·수정일을 유지하고 새 근거만 추가합니다.
+- `different_theme`: 같은 종목에 다른 테마가 존재한다는 검토 정보입니다. 다중 테마를 허용하므로 오류나 의미상 모순으로 단정하지 않으며 기존 태그를 삭제하지 않습니다.
+- `errors`: 잘못된 코드/날짜/필수 메타데이터, 정규화 후 중복 행, 동일 근거의 이용조건 변경 등입니다. 하나라도 있으면 전체 적용을 막습니다. 이용조건의 과거 기록은 수정하지 않고 새 확인일에 새 근거로 기록합니다.
+- `new_stocks`: 마스터에 없는 6자리 코드에 검토한 `stock_name`까지 제공한 경우입니다. 이름이 없으면 오류입니다. 기존 종목명은 CSV로 수정하지 않습니다.
+
+외부 dry-run은 읽기 전용 DB 연결을 사용해 스키마·태그·이력을 생성하지 않습니다. 실제 적용 시 파일과 현재 DB 상태를 다시 검증합니다. dry-run 후 파일/별칭/DB가 바뀌면 새 검증 결과가 달라질 수 있으므로 다시 검토하세요.
+
+### 4. 적용 및 전후 비교 보고서
+
+```powershell
+# dry-run을 검토한 뒤 같은 인자로 적용
+.\.venv\Scripts\python.exe -m kiwoom_collector @importArgs
+$LASTEXITCODE
+
+# 전체 근거·기존 태그 감사 이력·이용조건 확인 기록
+.\.venv\Scripts\python.exe -m kiwoom_collector sector provenance 005930
+
+# 마지막 가져오기의 영구 보존 보고서를 JSON 파일로 내보내기
+.\.venv\Scripts\python.exe -m kiwoom_collector sector import-report latest --output data/theme-import-report.json
+
+# 기존 분석에 새 분류가 반영되는지 확인 (API 호출 없음)
+.\.venv\Scripts\python.exe -m kiwoom_collector sector summary
+.\.venv\Scripts\python.exe -m kiwoom_collector condition report --environment mock
+
+# 분류 후 남은 우선 검토 종목 (새 파일명 사용)
+.\.venv\Scripts\python.exe -m kiwoom_collector sector export-priority --environment mock --output data/priority-remaining.csv
+```
+
+보고서는 `import_id`로 보존합니다. `sector import-report 가져오기ID`로 특정 보고서를 조회할 수 있습니다. `latest`는 환경 구분 없이 가장 최근에 적용한 가져오기이며 보고서 내부 `environment`가 비교 대상 환경입니다. `provenance`, 보고서 조회, 우선순위 내보내기는 읽기 전용이며 인증정보가 필요 없습니다.
+
+`before`와 `after`에 종목 마스터 전체(`master`)와 고정된 성공 관측 합집합(`observed`)의 미분류 수·비율을 표시합니다. `sector_changes`에는 섹터별 전체 마스터 종목 수와 관측 합집합 종목 수의 전후 값을 표시합니다. 적용 중에는 같은 트랜잭션·같은 관측 종목 집합을 사용해 수집기에서 새 데이터가 들어와 분모가 바뀌는 문제를 막습니다. 새 종목 등록으로 마스터 분모가 커진 경우에는 전후 `stock_count`도 함께 비교하세요. 분모가 없으면 비율은 0이 아닌 `null`입니다. 다중 테마로 섹터 간 종목 수 합은 전체 고유 종목 수보다 클 수 있습니다.
+
+새 테이블은 `sector_external_sources`, `sector_source_terms`, `sector_tag_evidence`, `sector_external_imports`, `sector_aliases`입니다. 실제 외부 가져오기 또는 별칭 생성 시 기존 테이블을 ALTER/삭제하지 않고 추가하며, 가져오기의 스키마·새 마스터·태그 연결·근거·이용조건·보고서는 한 트랜잭션으로 커밋/롤백합니다. 기존 태그는 분석용 연결에 그대로 두고 출처별 근거를 추가합니다. 과거 태그의 확인일을 임의로 생성하지 않으며 근거가 없으면 `null`로 표시합니다. 새 CSV에 빠진 종목이나 테마를 자동 삭제하지 않습니다. 동일 근거 재가져오기는 중복 태그/근거를 만들지 않지만 적용 실행 자체는 새 가져오기 보고서로 남습니다. 수동 `sector untag`는 기존 명시적 연결 해제 기능을 유지하며 과거 근거는 삭제하지 않습니다.
+
+### 행마다 출처와 확인일이 다른 CSV
+
+지원 헤더는 `stock_code,sector_name` 필수에 아래 선택 열을 조합할 수 있습니다.
+
+```text
+stock_name,source,observed_at,terms_url,terms_note,terms_checked_at
+```
+
+이 중 메타데이터 열이 하나라도 있거나 확인일/이용조건 옵션이 있으면 외부 자료 가져오기 모드를 사용합니다. 비어 있는 행별 값은 같은 이름의 CLI 기본값으로 보충하며 모두 없으면 필수 메타데이터 오류입니다. `terms_checked_at` 열의 CLI 이름은 `--terms-checked-at`입니다. 한 파일에 핀업·인포스탁 자료를 섞을 수 있지만 각 행의 이용조건은 해당 출처에서 실제 확인한 내용이어야 합니다. `source` 명칭을 매번 동일하게 사용하세요.
+
+메타데이터 없는 기존 2/3열 가져오기와 수동 태깅 명령은 유지합니다. 단, **기존 CSV 가져오기가 다른 출처를 자동 덮어쓰던 동작은 중단**했습니다. 충돌 시 파일 전체를 적용하지 않고 확인일·이용조건을 포함한 외부 모드 사용을 안내합니다. 명시적인 수동 `sector tag`의 출처 정정 동작은 감사 이력을 남기는 기존 방식으로 유지하며, 외부 근거 기록 자체는 수정하지 않습니다.
+
+## CLI 옵션 지원 범위 및 실제 진입점 검증
+
+옵션 범위와 하위 명령의 인자 수는 `__main__.py`의 단일 검증 규칙으로 확인합니다. 옵션은 명령 앞/중간/뒤에 사용할 수 있습니다. 지원하지 않는 옵션은 DB나 인증정보를 열기 전에 종료 코드 2로 거부합니다.
+
+| 옵션 | 지원 명령 |
+| --- | --- |
+| `--environment mock/real` | `sector timeline`, `sector dashboard`, `sector export-priority`, 외부 모드 `sector import`, `condition report` |
+| `--output` 필수 | `sector export-untagged`, `sector export-priority`, `sector dashboard` |
+| `--output` 선택 | `sector import-report` (JSON 파일) |
+| `--source` | `sector tag`, `sector untag`, `sector import`, `sector alias add` |
+| `--observed-at`, `--terms-url`, `--terms-note`, `--terms-checked-at` | `sector import`만 |
+| `--dry-run` | `sector import`만 |
+| `--date` | `sector timeline`, `sector dashboard` |
+| `--qry-tp` | `once`, `collect`, `sector timeline`, `sector dashboard` |
+| `--interval`, `--schedule`, `--test-now`, `--holidays` | `collect`만 (기존 상호 배타 조건 유지) |
+
+`--environment`는 저장된 관측의 분석 범위이며 API 서버 전환 옵션이 아닙니다. `condition list/fetch`는 `.env`의 `KIWOOM_ENV`만 사용하므로 `--environment`를 거부합니다. `sector provenance`, `sector alias`, `sector import-report`도 환경 필터를 받지 않습니다. 태그·출처 근거는 공통 마스터이며 특정 환경 데이터로 복제하지 않습니다. `sector import --environment ...`는 외부 모드를 선택하므로 확인일·이용조건이 없으면 오류입니다.
+
+URL·이용조건 메모·이용조건 확인일을 아직 확인하지 않았다면 외부 가져오기를 적용하지 마세요. 생략/빈값을 `확인 완료`, 오늘 날짜, 임의 URL 등으로 채우지 않습니다. dry-run과 실제 적용 모두 필수 메타데이터 누락을 오류로 보고하며 확인 근거·태그·가져오기 보고서를 저장하지 않습니다. 빈 셀을 CLI의 실제 확인값으로 보충하는 것은 지원하지만, 둘 다 미입력인 값을 임의 생성하지 않습니다.
+
+`tests/test_cli_entrypoint.py`는 내부 함수 호출 대신 별도 프로세스에서 실제 `python -m kiwoom_collector ...`를 실행합니다. 임시 DB/CSV를 사용하고 자식 프로세스의 네트워크 연결을 차단합니다. 우선순위 CSV, 외부 가져오기 dry-run/적용, provenance, 보고서 파일, 별칭, 기존 명령, 옵션 범위, 빈 이용조건의 저장 방지를 함께 검증합니다. 전체 테스트와 Windows 검증은 다음 순서로 실행하세요.
+
+```powershell
+git status --short
+git pull --ff-only
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m kiwoom_collector --help
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+.\.venv\Scripts\python.exe -m unittest discover -s tests -p test_cli_entrypoint.py -v
+.\.venv\Scripts\python.exe -m kiwoom_collector sector export-priority --environment mock --output data/priority-verify.csv
+.\.venv\Scripts\python.exe -m kiwoom_collector sector provenance 005930
+```
+
+`git pull`이 로컬 수정 때문에 중단되면 해당 파일을 보존하고 변경을 병합하세요. `reset --hard`, `.env` 복사, DB 삭제로 해결하지 마세요. 출력 CSV가 이미 있으면 새 파일명을 사용합니다. 가져오기 및 보고서는 위의 직접 확인한 메타데이터 예시를 따릅니다. `import-report latest`는 실제 적용 이력이 없으면 명확한 오류를 반환하며 임의 보고서를 만들지 않습니다.

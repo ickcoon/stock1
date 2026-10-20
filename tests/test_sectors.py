@@ -189,14 +189,18 @@ class SectorTests(TestCase):
         self.manager.import_csv(path, source='수동')
         before = self.manager.show('005930')['sectors'][0]
         report = self.manager.import_csv(path, source='인포스탁 참고', dry_run=True)
-        self.assertEqual(report['updated'], 1)
+        self.assertEqual(report['updated'], 0)
+        self.assertEqual(len(report['conflicts']), 1)
         self.assertEqual(self.manager.show('005930')['sectors'][0], before)
         report = self.manager.import_csv(path, source='인포스탁 참고')
-        self.assertEqual(report['updated'], 1)
+        self.assertEqual(report['updated'], 0)
+        self.assertEqual(len(report['conflicts']), 1)
         after = self.manager.show('005930')['sectors'][0]
         self.assertEqual(after['created_at'], before['created_at'])
-        self.assertEqual(after['source'], '인포스탁 참고')
-        self.assertEqual(self.store.db.execute('SELECT COUNT(*) FROM stock_sector_events').fetchone()[0], 2)
+        self.assertFalse(report['applied'])
+        self.assertTrue(report['errors'])
+        self.assertEqual(after, before)
+        self.assertEqual(self.store.db.execute('SELECT COUNT(*) FROM stock_sector_events').fetchone()[0], 1)
 
     def test_failed_backfill_rolls_back_migration_and_retries(self):
         self.store.close()

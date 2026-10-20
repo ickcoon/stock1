@@ -90,6 +90,9 @@ class SectorManager:
 
     def add(self, name):
         name = label(name, '섹터명')
+        from .external_tags import resolve_name
+        if resolve_name(self.db, name, '*') != name:
+            raise ValueError('이미 등록된 별칭입니다. 정식 섹터명을 사용하세요.')
         with self.db:
             self.db.execute('INSERT INTO sectors(sector_name,created_at) VALUES(?,?) ON CONFLICT(sector_name) DO NOTHING', (name, timestamp()))
         return dict(self._sector(name))
@@ -187,6 +190,8 @@ class SectorManager:
                         continue
                     try:
                         name = label(name, '섹터명')
+                        from .external_tags import resolve_name
+                        name = resolve_name(self.db, name, source)
                     except ValueError:
                         errors.append(f'{line}행: 섹터명 형식 오류')
                         continue
@@ -198,7 +203,7 @@ class SectorManager:
                     pairs.append((line, code, name))
         except (UnicodeError, csv.Error):
             raise ValueError('CSV는 UTF-8(또는 UTF-8 BOM) 형식이어야 하며 올바른 CSV 구문을 사용해야 합니다.') from None
-        report = {'dry_run': dry_run, 'valid_rows': 0, 'new_sectors': [], 'added': 0, 'updated': 0, 'unchanged': 0, 'errors': errors, 'applied': False}
+        report = {'dry_run': dry_run, 'valid_rows': 0, 'new_sectors': [], 'added': 0, 'updated': 0, 'unchanged': 0, 'errors': errors, 'conflicts': [], 'applied': False}
         with self.db:
             self.db.execute('BEGIN IMMEDIATE')
             valid = []
@@ -212,8 +217,11 @@ class SectorManager:
             for code, name in valid:
                 row = self.db.execute('''SELECT t.source FROM stock_sectors t JOIN sectors s ON s.sector_id=t.sector_id
                     WHERE t.stock_code=? AND s.sector_name=?''', (code, name)).fetchone()
-                key = 'unchanged' if row and row['source'] == source else 'updated' if row else 'added'
+                key = 'unchanged' if row else 'added'
                 report[key] += 1
+                if row and row['source'] != source:
+                    report['conflicts'].append({'stock_code':code,'sector_name':name,'existing_source':row['source'],'incoming_source':source})
+                    errors.append('다른 출처의 기존 태그를 덮어쓰지 않습니다. 확인일·이용조건을 제공하는 외부 CSV 가져오기를 사용하세요.')
             if errors or dry_run:
                 return report
             for name in report['new_sectors']:
