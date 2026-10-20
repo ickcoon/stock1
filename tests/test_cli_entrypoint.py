@@ -169,6 +169,16 @@ socket.socket.connect_ex = forbidden
         self.cli('sector','import',self.csv,*self.opts,'--observed-at','2099-01-01',expected=1)
         self.assertEqual(before,self.dump())
 
+    def test_workbench_real_entrypoint_is_readonly_and_accepts_scoped_options(self):
+        before = self.dump()
+        output = self.folder/'workbench.html'
+        result = json.loads(self.cli('sector','workbench','--environment','mock','--output',output).stdout)
+        self.assertEqual(result['stock_count'],2)
+        self.assertIn('workspace-data',output.read_text(encoding='utf-8'))
+        self.assertEqual(before,self.dump())
+        self.cli('sector','workbench',expected=2)
+        self.cli('sector','workbench','--output',self.folder/'other.html','--source','x',expected=2)
+
     def test_help_documents_new_metadata_options(self):
         result = self.run_cli('--help')
         for option in ('--observed-at','--terms-url','--terms-note','--terms-checked-at','export-priority','import-report'):

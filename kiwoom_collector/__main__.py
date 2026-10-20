@@ -16,6 +16,7 @@ from .timeline import sector_timeline
 from .dashboard import export_dashboard
 from .conditions import ConditionClient, fetch_conditions, condition_report
 from .external_tags import external_command, is_external_csv
+from .workbench import export_workbench
 
 from .client import KST, KiwoomClient, KiwoomError
 from .config import load_credentials
@@ -28,7 +29,7 @@ def validate_cli(parser, args):
         'sector list': 0, 'sector untagged': 0, 'sector import': 1,
         'sector export-untagged': 0, 'sector summary': 0, 'sector timeline': 0,
         'sector dashboard': 0, 'sector export-priority': 0, 'sector provenance': 1,
-        'sector import-report': 1, 'sector alias add': 2, 'sector alias list': 0,
+        'sector workbench': 0, 'sector import-report': 1, 'sector alias add': 2, 'sector alias list': 0,
         'condition list': 0, 'condition fetch': 0, 'condition report': 0,
     }
     key = args.command
@@ -38,14 +39,14 @@ def validate_cli(parser, args):
         key = ' '.join([args.command, *values[:prefix]])
         if key not in arities or len(values[prefix:]) != arities[key]:
             parser.error('하위 명령/인자 수를 확인하세요. sector: add/tag/untag/show/list/untagged/import/'
-                         'export-untagged/export-priority/provenance/import-report/alias add/alias list/'
+                         'export-untagged/export-priority/provenance/import-report/workbench/alias add/alias list/'
                          'summary/timeline/dashboard; condition: list/fetch/report')
     elif values:
         parser.error('추가 위치 인자는 sector/condition 하위 명령에서만 사용합니다.')
     policy = {
         'environment': {'sector timeline', 'sector dashboard', 'sector export-priority',
-                        'sector import', 'condition report'},
-        'output': {'sector export-untagged', 'sector export-priority', 'sector dashboard', 'sector import-report'},
+                        'sector import', 'sector workbench', 'condition report'},
+        'output': {'sector export-untagged', 'sector export-priority', 'sector dashboard', 'sector workbench', 'sector import-report'},
         'date': {'sector timeline', 'sector dashboard'},
         'source': {'sector tag', 'sector untag', 'sector import', 'sector alias add'},
         'dry_run': {'sector import'},
@@ -58,7 +59,7 @@ def validate_cli(parser, args):
         value = getattr(args, field)
         if value is not None and value is not False and key not in allowed:
             parser.error('--' + field.replace('_', '-') + ' 지원 명령: ' + ', '.join(sorted(allowed)))
-    if key in {'sector export-untagged', 'sector export-priority', 'sector dashboard'} and args.output is None:
+    if key in {'sector export-untagged', 'sector export-priority', 'sector dashboard', 'sector workbench'} and args.output is None:
         parser.error(key + '에는 --output이 필요합니다.')
     if args.holidays is not None and not args.schedule:
         parser.error('--holidays는 collect --schedule과 함께 사용하세요.')
@@ -74,9 +75,11 @@ def validate_cli(parser, args):
 def main(argv=None) -> int:
     parser = argparse.ArgumentParser(
         description="키움 조회순위 수집 및 SQLite 이력 조회",
-        epilog="sector: add/tag/untag/show/list/untagged/import/export-untagged/export-priority/"
-               "provenance/import-report/alias add/alias list/summary/timeline/dashboard; "
-               "condition: list/fetch/report")
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="sector: add, tag, untag, show, list, untagged, import, export-untagged,\n"
+               "        export-priority, workbench, provenance, import-report,\n"
+               "        alias add, alias list, summary, timeline, dashboard\n"
+               "condition: list, fetch, report")
     parser.add_argument("command", choices=("check-config", "auth", "once", "collect", "status", "latest", "sector", "condition"), nargs="?", default="check-config")
     parser.add_argument("--qry-tp", choices=("1", "2", "3", "4", "5"), default=None, help="1:1분, 2:10분, 3:1시간, 4:당일 누적, 5:30초")
     parser.add_argument("--interval", type=int, default=None, metavar="SECONDS", help="수집 간격(초), 기본 300, 최소 60")
@@ -85,11 +88,11 @@ def main(argv=None) -> int:
     parser.add_argument("sector_args", nargs="*", help="sector 또는 condition 하위 명령 및 인자")
     parser.add_argument("--source", help="섹터 분류 출처 (기본 수동, CSV 가져오기는 CSV)")
     parser.add_argument("--dry-run", action="store_true", help="sector import: 검증만, 태그 저장 안 함")
-    parser.add_argument("--output", type=Path, help="sector export-untagged/export-priority/dashboard/import-report: 새 CSV/HTML/JSON 경로")
+    parser.add_argument("--output", type=Path, help="sector export-untagged/export-priority/workbench/dashboard/import-report: 새 CSV/HTML/JSON 경로")
     parser.add_argument('--schedule', action='store_true', help='collect: KST 하루 10회 고정 시간표')
     parser.add_argument('--holidays', type=Path, help='고정 일정용 KRX 휴장일 목록 파일')
     parser.add_argument('--date', help='sector timeline/dashboard: YYYY-MM-DD, 기본 KST 오늘')
-    parser.add_argument('--environment', choices=('mock', 'real'), default=None, help='sector timeline/dashboard/export-priority/import 또는 condition report의 관측 환경, 기본 mock; API 서버는 .env에서 선택')
+    parser.add_argument('--environment', choices=('mock', 'real'), default=None, help='sector timeline/dashboard/export-priority/workbench/import 또는 condition report의 관측 환경, 기본 mock; API 서버는 .env에서 선택')
     parser.add_argument('--observed-at', help='외부 테마 확인일 YYYY-MM-DD')
     parser.add_argument('--terms-url', help='사용자가 확인한 출처 이용조건 URL (접속 안 함)')
     parser.add_argument('--terms-note', help='이용조건 확인 메모')
@@ -105,6 +108,9 @@ def main(argv=None) -> int:
     client = None
     store = None
     try:
+        if command_key == 'sector workbench':
+            print(json.dumps(export_workbench(args.db, args.environment or 'mock', args.output), ensure_ascii=False, indent=2))
+            return 0
         external_import = args.command == 'sector' and args.sector_args[:1] == ['import'] and (
             external_options or args.environment is not None or is_external_csv(args.sector_args[1]))
         if external_action or external_import:

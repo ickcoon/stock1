@@ -838,8 +838,8 @@ stock_name,source,observed_at,terms_url,terms_note,terms_checked_at
 
 | 옵션 | 지원 명령 |
 | --- | --- |
-| `--environment mock/real` | `sector timeline`, `sector dashboard`, `sector export-priority`, 외부 모드 `sector import`, `condition report` |
-| `--output` 필수 | `sector export-untagged`, `sector export-priority`, `sector dashboard` |
+| `--environment mock/real` | `sector timeline`, `sector dashboard`, `sector export-priority`, `sector workbench`, 외부 모드 `sector import`, `condition report` |
+| `--output` 필수 | `sector export-untagged`, `sector export-priority`, `sector workbench`, `sector dashboard` |
 | `--output` 선택 | `sector import-report` (JSON 파일) |
 | `--source` | `sector tag`, `sector untag`, `sector import`, `sector alias add` |
 | `--observed-at`, `--terms-url`, `--terms-note`, `--terms-checked-at` | `sector import`만 |
@@ -866,3 +866,52 @@ git pull --ff-only
 ```
 
 `git pull`이 로컬 수정 때문에 중단되면 해당 파일을 보존하고 변경을 병합하세요. `reset --hard`, `.env` 복사, DB 삭제로 해결하지 마세요. 출력 CSV가 이미 있으면 새 파일명을 사용합니다. 가져오기 및 보고서는 위의 직접 확인한 메타데이터 예시를 따릅니다. `import-report latest`는 실제 적용 이력이 없으면 명확한 오류를 반환하며 임의 보고서를 만들지 않습니다.
+
+## 로컬 미분류 종목 작업실 (HTML → 확인한 CSV)
+
+`sector workbench`는 기존 `sector export-priority`와 같은 조회 함수·정렬을 사용해 **DB를 읽기만 하고 독립 HTML 파일을 생성**합니다. 웹 서버, 외부 스크립트, 사이트 스크래핑, 키움 API 호출이 필요 없습니다. 브라우저는 SQLite에 직접 연결하지 않으며 실제 DB 적용은 기존 외부 CSV importer로만 수행합니다. 기존 수집기·스케줄·조건검색 프로세스를 재시작하지 않습니다.
+
+Windows 프로젝트 폴더의 PowerShell에서 실행하세요. 기존 `.env`, DB를 복사·초기화·삭제하지 마세요. 출력 HTML이 이미 있으면 다른 파일명을 지정합니다.
+
+```powershell
+git status --short
+git pull --ff-only
+.\.venv\Scripts\python.exe -m pip install -r requirements.txt
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+
+.\.venv\Scripts\python.exe -m kiwoom_collector sector workbench --environment mock --output data/sector-workbench.html
+Start-Process (Resolve-Path data/sector-workbench.html).Path
+```
+
+`--db data/stock1.db`로 DB를 선택할 수 있습니다. `--environment mock/real`은 관측 이력 필터이며 API 서버를 호출하지 않습니다. `--output`은 새 `.html` 파일 경로로 필수입니다. `--source`, 날짜/이용조건 옵션은 HTML 생성 옵션이 아니며 브라우저에서 태그별로 입력합니다. DB나 필요한 기존 스키마가 없으면 쓰기용 Store를 열거나 자동 마이그레이션하지 않고 오류로 종료합니다.
+
+1. 왼쪽의 미분류 종목을 우선순위대로 선택합니다. 코드·이름으로 검색할 수 있습니다. 대상은 해당 환경의 전체 성공 [0198]·조건검색 이력에 등장한 미분류 종목 합집합이며, 단순히 모든 마스터 종목을 보여주는 화면은 아닙니다.
+2. 실제 DB에서 계산한 누적 [0198] 등장 회차 수, 최근 7일 등장 회차 수, 조건검색 누적 등장 회차 수·조건식 종류, 최종 관측 시각을 확인합니다. 최근 7일은 HTML 생성 시각 직전 7×24시간이며 범위를 화면에 KST로 표시합니다. 테스트 회차·실패 회차·다른 환경은 제외합니다. 조건검색 등장 기록 없음은 조건검색 자체를 실행하지 않았는지, 실행했으나 해당 종목이 없었는지를 구분하는 표현이 아닙니다.
+3. 기존 테마를 검색해 선택합니다. 별칭도 검색에 사용하지만 실제 선택·CSV에는 정식 테마명을 사용합니다. 괄호 숫자는 현재 DB의 소속 종목 수입니다. 여러 테마를 선택하거나 새 이름을 입력할 수 있습니다. 새 테마는 이 창의 선택에만 추가되며 **CSV를 실제 import할 때** DB에 등록됩니다.
+4. 각 테마의 출처, 자료 확인일, 이용조건 URL·메모·확인일을 직접 입력합니다. 반복 입력은 상단의 접힌 메타데이터 영역에서 입력 후 현재 종목의 미확인 태그에 복사할 수 있습니다. 복사만으로 확인 표시가 켜지지 않으며 날짜나 URL을 자동 생성하지 않습니다.
+5. 태그별 확인 체크박스 또는 **현재 종목 태그를 직접 확인했음** 버튼으로 검토한 항목을 표시합니다. 일괄 확인은 모든 필수 값이 유효해야 합니다. 메타데이터를 나중에 수정하면 해당 확인 표시가 해제됩니다.
+6. **확인한 태그 CSV 다운로드**를 누릅니다. 미확인 태그는 제외하며 화면에 제외 수를 표시합니다. 확인 표시가 있어도 빈값·잘못된 날짜·URL 등 오류가 있으면 내보내기를 중단합니다. 선택 해제는 이번 CSV에서만 제외할 뿐 기존 DB 태그를 삭제하지 않습니다.
+
+CSV는 기존 외부 import가 읽는 `stock_code,stock_name,sector_name,source,observed_at,terms_url,terms_note,terms_checked_at` 형식의 UTF-8 BOM입니다. 다중 테마는 여러 행으로 출력하고 인용부호·쉼표를 CSV 규칙에 맞게 처리합니다. 종목코드는 원래 문자열이며 Excel에서는 텍스트 열로 가져오세요.
+
+다운로드 파일을 프로젝트의 `data/themes-reviewed.csv`로 옮긴 다음 실행합니다. HTML에서 확인한 메타데이터가 행마다 있으므로 CLI에서 임의 기본값을 보충할 필요가 없습니다.
+
+```powershell
+.\.venv\Scripts\python.exe -m kiwoom_collector sector import data/themes-reviewed.csv --environment mock --dry-run
+$LASTEXITCODE
+
+# errors=[]이고 conflicts·new_stocks·new_tags·new_evidence를 검토한 뒤에만 적용
+.\.venv\Scripts\python.exe -m kiwoom_collector sector import data/themes-reviewed.csv --environment mock
+
+.\.venv\Scripts\python.exe -m kiwoom_collector sector import-report latest --output data/workbench-import-report.json
+.\.venv\Scripts\python.exe -m kiwoom_collector sector provenance 005930
+
+# 적용 후 남은 종목으로 새 작업 화면 생성
+.\.venv\Scripts\python.exe -m kiwoom_collector sector workbench --environment mock --output data/sector-workbench-next.html
+```
+
+**작업 화면은 스냅샷이며 선택 내용의 자동 저장·복원은 없습니다.** 새로고침/창 닫기 전에 확인한 태그를 CSV로 다운로드하세요. 미확인 항목은 다운로드되지 않습니다. 브라우저 다운로드 폴더·이름은 브라우저 설정에 따릅니다. HTML 파일을 공유하면 포함된 종목·테마·출처 목록도 공유되므로 로컬 `data/`에 보관하세요. 인증정보·API 원본 응답·토큰은 HTML에 포함하지 않습니다.
+
+미확인 자료는 HTML에서 DB에 적용할 수 없으며, CSV를 수동 편집해 필수 메타데이터를 없애도 기존 importer가 다시 검증해 거부합니다. HTML 생성 후 DB가 바뀔 수 있으므로 반드시 현재 DB에 대한 dry-run을 검토해야 합니다. 이용조건 확인 체크는 사용자 진술이며 외부 서비스의 허가나 분류의 정확성을 자동 검증했다는 뜻이 아닙니다.
+
+테스트에는 읽기 전용 DB 보존, 우선순위 일치, 최근 7일 범위, 환경 분리, 조건검색 테이블 없는 DB, 안전한 HTML 문자열 처리, 실제 `python -m` 진입점과 브라우저의 편집→CSV→기존 importer 왕복을 포함합니다. 브라우저 검사는 Chromium/Edge/Chrome이 설치되어 있으면 headless로 실행하고 없으면 해당 검사만 skipped로 표시합니다. 클라우드 관리 브라우저의 로컬 파일 탐색 제한 때문에 동일 HTML을 메모리에 렌더링하여 검사하며 애플리케이션 서버를 띄우지 않습니다. 실제 Windows 파일 열기는 위 `Start-Process` 절차로 확인하세요.

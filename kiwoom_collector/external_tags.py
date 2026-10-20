@@ -328,7 +328,7 @@ def exclusive_output(path, suffix, write):
     return str(path)
 
 
-def export_priority(db, output, environment):
+def priority_rows(db, environment):
     pool, excluded = observations(db,environment)
     tagged = {r['stock_code'] for r in _rows(db, 'SELECT DISTINCT stock_code FROM stock_sectors')}
     master = {r['stock_code']:r['stock_name'] for r in _rows(db,'SELECT stock_code,stock_name FROM stocks')}
@@ -343,6 +343,11 @@ def export_priority(db, output, environment):
             'in_master':code in master})
     items.sort(key=lambda r: (-int(r['in_both']),-len(r['condition_aliases']),
         -(r['ranking_appearances']+r['condition_appearances']),r['best_rank'] or 999,r['stock_code']))
+    return items, excluded
+
+
+def export_priority(db, output, environment):
+    items, excluded = priority_rows(db, environment)
     def write(handle):
         writer = csv.DictWriter(handle,fieldnames=['stock_code','stock_name','sector_name'])
         writer.writeheader()
