@@ -70,13 +70,14 @@ def _summarize(db, path, collection_id=None):
     tags = []
     if stocks:
         placeholders = ','.join('?' for _ in stocks)
-        tags = _rows(db, f"""SELECT t.stock_code,s.sector_id,s.sector_name
+        tags = _rows(db, f"""SELECT t.stock_code,s.sector_id,s.sector_name,t.source,t.updated_at
             FROM stock_sectors t JOIN sectors s ON s.sector_id=t.sector_id
             WHERE t.stock_code IN ({placeholders}) ORDER BY s.sector_name,s.sector_id,t.stock_code""", tuple(stocks))
     groups, classified = {}, set()
     for tag in tags:
-        group = groups.setdefault(tag['sector_id'], {'sector_id': tag['sector_id'], 'sector_name': tag['sector_name'], 'members': {}})
+        group = groups.setdefault(tag['sector_id'], {'sector_id': tag['sector_id'], 'sector_name': tag['sector_name'], 'members': {}, 'tag_assignments': []})
         group['members'][tag['stock_code']] = stocks[tag['stock_code']]
+        group['tag_assignments'].append({'stock_code': tag['stock_code'], 'source': tag['source'], 'updated_at': tag['updated_at']})
         classified.add(tag['stock_code'])
     for group in groups.values():
         members = sorted(group.pop('members').values(), key=lambda stock: stock['rank'])

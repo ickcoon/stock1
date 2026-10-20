@@ -2,7 +2,7 @@
 from datetime import date
 
 from .schedule import SLOTS, slot_at
-from .classification import classify
+from .classification import classify, period_interest
 from .summary import read_database, _rows, _summarize
 
 
@@ -54,7 +54,14 @@ def compare(current, previous):
         new, old = current_groups.get(key), previous_groups.get(key)
         now_members = {s['stock_code']: s for s in new['stocks']} if new else {}
         old_members = {s['stock_code']: s for s in old['stocks']} if old else {}
+        direction = period_interest(new, old)
+        member_changed = set(now_members) != set(old_members)
         sectors.append({
+            'interest_direction': direction,
+            'interest_assessment': '관심도 유지·구성 교체' if direction == '유지' and member_changed else direction,
+            'composition_changed': member_changed,
+            'top5_delta': (new['top5_count'] if new else 0)-(old['top5_count'] if old else 0),
+            'top10_delta': (new['top10_count'] if new else 0)-(old['top10_count'] if old else 0),
             'sector_id': key, 'sector_name': (new or old)['sector_name'],
             'previous_count': len(old_members), 'current_count': len(now_members),
             'count_delta': len(now_members) - len(old_members),

@@ -53,3 +53,22 @@ def classify(current, baseline, previous_comparison):
     return {'available': True, 'sectors': results,
             'rotation_candidate': bool(weakening and rising), 'weakening_sectors': weakening,
             'rising_sectors': rising, 'rotation_note': '동시에 약화/소멸 군집과 강화/신규 군집이 보이면 관심군집 교체 후보; 인과관계나 주도섹터 교체 확정 아님'}
+
+
+def period_interest(current, previous):
+    """Direction of observed attention metrics, independent of member identity."""
+    if previous is None:
+        return '신규 관측'
+    if current is None:
+        return '관측 이탈'
+    deltas = [current['stock_count']-previous['stock_count'],
+              current['top5_count']-previous['top5_count'],
+              current['top10_count']-previous['top10_count'],
+              previous['mean_rank']-current['mean_rank']]
+    if all(value == 0 for value in deltas):
+        return '유지'
+    if all(value >= 0 for value in deltas):
+        return '강화'
+    if all(value <= 0 for value in deltas):
+        return '약화'
+    return '혼조'

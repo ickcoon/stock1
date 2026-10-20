@@ -117,3 +117,46 @@ class DashboardReadOnlyReviewTests(TestCase):
         self.assertIn('섹터 내 교체율(직전 대비)',text)
         self.assertIn('섹터 내 교체율(09:40 대비)',text)
         self.assertEqual(list(self.store.db.iterdump()),before)
+
+    def test_current_tag_sources_are_exposed_without_rewriting_data(self):
+        manager=SectorManager(self.store)
+        manager.add('외부 분류 참고')
+        manager.tag('005930','외부 분류 참고','외부 테마 자료·수동 검토')
+        before=list(self.store.db.iterdump())
+        report=sector_timeline(self.path,self.day.isoformat())
+        selected=next(s for s in report['slots'] if s['slot']=='13:00')
+        source_group=next(s for s in selected['sectors'] if s['sector_name']=='외부 분류 참고')
+        assignment=source_group['tag_assignments'][0]
+        self.assertEqual(assignment['stock_code'],'005930')
+        self.assertEqual(assignment['source'],'외부 테마 자료·수동 검토')
+        self.assertTrue(assignment['updated_at'])
+        self.assertEqual(selected['summary']['unique_stock_count'],3)
+        self.assertEqual(list(self.store.db.iterdump()),before)
+
+
+class PeriodInterestTests(TestCase):
+    def test_member_replacement_with_equal_attention_is_explicit(self):
+        old=summary({1:[stock('A',6),stock('B',11)]})
+        current=summary({1:[stock('C',6),stock('D',11)]})
+        group=compare(current,old)['sectors'][0]
+        self.assertEqual(group['interest_direction'],'유지')
+        self.assertEqual(group['interest_assessment'],'관심도 유지·구성 교체')
+        self.assertEqual(group['replacement_percent'],100)
+        self.assertEqual(group['retained_count'],0)
+        self.assertEqual(group['top5_delta'],0)
+        self.assertEqual(group['top10_delta'],0)
+        self.assertEqual(group['mean_rank_improvement'],0)
+
+    def test_period_quality_direction_and_missing(self):
+        old=summary({1:[stock('A',6),stock('B',11)]})
+        better=summary({1:[stock('A',3),stock('B',7)]})
+        strong=compare(better,old)['sectors'][0]
+        self.assertEqual(strong['interest_direction'],'강화')
+        self.assertEqual((strong['top5_delta'],strong['top10_delta']),(1,1))
+        self.assertGreater(strong['mean_rank_improvement'],0)
+        self.assertEqual(compare(old,better)['sectors'][0]['interest_direction'],'약화')
+        self.assertEqual(compare(old,old)['sectors'][0]['interest_direction'],'유지')
+        missing=compare(None,old)
+        self.assertFalse(missing['available'])
+        self.assertIsNone(missing['replacement_percent'])
+        self.assertNotIn('sectors',missing)
