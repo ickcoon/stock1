@@ -40,7 +40,7 @@ def _summarize(db, path, collection_id=None):
         'db': str(path), 'collection': None, 'top_n': 20,
         'observed_record_count': 0, 'unique_stock_count': 0,
         'tagged_unique_stock_count': 0, 'unclassified_stock_count': 0,
-        'unclassified_stocks': [], 'unidentified_record_count': 0, 'unidentified_records': [],
+        'unclassified_ratio_percent': None, 'unclassified_stocks': [], 'unidentified_record_count': 0, 'unidentified_records': [],
         'sectors': [],
         'note': '현재 섹터 태그 기준 분석. 군집 후보는 2종목 이상이라는 뜻이며 주도섹터·투자 판단이 아닙니다. 비율 분모는 항상 20입니다.',
     }
@@ -90,4 +90,5 @@ def _summarize(db, path, collection_id=None):
     result['tagged_unique_stock_count'] = len(classified)
     result['unclassified_stocks'] = [stock for code, stock in stocks.items() if code not in classified]
     result['unclassified_stock_count'] = len(result['unclassified_stocks'])
+    result['unclassified_ratio_percent'] = 100 * result['unclassified_stock_count'] / len(stocks) if stocks else None
     return result

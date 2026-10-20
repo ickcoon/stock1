@@ -18,7 +18,11 @@ def _change(current, previous):
     return {
         'entered': [current[code] for code in sorted(set(current) - set(previous))],
         'exited': [previous[code] for code in sorted(set(previous) - set(current))],
+        'previous_unique_count': len(previous), 'current_unique_count': len(current),
+        'entered_count': len(set(current) - set(previous)), 'exited_count': len(set(previous) - set(current)),
         'retained_count': len(retained),
+        'replacement_percent': 100 * len(set(previous) - set(current)) / len(previous) if previous else None,
+        'current_entry_percent': 100 * len(set(current) - set(previous)) / len(current) if current else None,
         'retention_percent': 100 * len(retained) / len(previous) if previous else None,
         'rank_changes': [{'stock_code': code, 'previous_rank': previous[code]['rank'],
                           'current_rank': current[code]['rank'],
@@ -43,7 +47,7 @@ def _groups(summary):
 
 def compare(current, previous):
     if current is None or previous is None:
-        return {'available': False, 'reason': '대응하는 성공 수집이 없어 비교 불가 (누락/빈 결과/실패를 0으로 대체하지 않음)'}
+        return {'available': False, 'replacement_percent': None, 'retention_percent': None, 'reason': '대응하는 성공 수집이 없어 비교 불가 (누락/빈 결과/실패를 0으로 대체하지 않음)'}
     current_groups, previous_groups = _groups(current), _groups(previous)
     sectors = []
     for key in sorted(set(current_groups) | set(previous_groups)):
