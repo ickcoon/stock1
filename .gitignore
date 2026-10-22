@@ -14,3 +14,8 @@ logs/
 *.sqlite-*
 *.sqlite3-*
 *.log.*
+
+# Local data archives and generated reports are never release source.
+data.zip
+*.html
+*.csv

@@ -17,6 +17,9 @@ from .dashboard import export_dashboard
 from .conditions import ConditionClient, fetch_conditions, condition_report
 from .external_tags import external_command, is_external_csv
 from .workbench import export_workbench
+from .quotes import QuoteClient, BatchQuoteClient, quote_test
+from .top20_quotes import dry_run as top20_dry_run, execute as top20_execute
+import math
 
 from .client import KST, KiwoomClient, KiwoomError
 from .config import load_credentials
@@ -45,11 +48,13 @@ def validate_cli(parser, args):
         parser.error('추가 위치 인자는 sector/condition 하위 명령에서만 사용합니다.')
     policy = {
         'environment': {'sector timeline', 'sector dashboard', 'sector export-priority',
-                        'sector import', 'sector workbench', 'condition report'},
+                        'sector import', 'sector workbench', 'condition report', 'quote-test', 'quote-batch-test', 'quote-top20-test'},
+        'collection_id': {'quote-test', 'quote-batch-test', 'quote-top20-test'}, 'limit': {'quote-test', 'quote-batch-test'},
+        'request_spacing': {'quote-top20-test'}, 'recollect': {'quote-top20-test'},
         'output': {'sector export-untagged', 'sector export-priority', 'sector dashboard', 'sector workbench', 'sector import-report'},
         'date': {'sector timeline', 'sector dashboard'},
         'source': {'sector tag', 'sector untag', 'sector import', 'sector alias add'},
-        'dry_run': {'sector import'},
+        'dry_run': {'sector import', 'quote-top20-test'},
         'observed_at': {'sector import'}, 'terms_url': {'sector import'},
         'terms_note': {'sector import'}, 'terms_checked_at': {'sector import'},
         'interval': {'collect'}, 'schedule': {'collect'}, 'test_now': {'collect'},
@@ -69,6 +74,12 @@ def validate_cli(parser, args):
         parser.error('--interval은 60초 이상이어야 합니다.')
     args.interval = 300 if args.interval is None else args.interval
     args.qry_tp = args.qry_tp or '1'
+    if key in ('quote-test', 'quote-batch-test', 'quote-top20-test') and not args.collection_id:
+        parser.error('시세 테스트에는 --collection-id가 필요합니다.')
+    if key == 'quote-batch-test' and args.limit not in (None, 2):
+        parser.error('quote-batch-test는 --limit 2만 지원합니다.')
+    if args.request_spacing is not None and (not math.isfinite(args.request_spacing) or args.request_spacing < 1.1):
+        parser.error('--request-spacing은 유한한 1.1초 이상이어야 합니다.')
     return key
 
 
@@ -80,7 +91,11 @@ def main(argv=None) -> int:
                "        export-priority, workbench, provenance, import-report,\n"
                "        alias add, alias list, summary, timeline, dashboard\n"
                "condition: list, fetch, report")
-    parser.add_argument("command", choices=("check-config", "auth", "once", "collect", "status", "latest", "sector", "condition"), nargs="?", default="check-config")
+    parser.add_argument("command", choices=("check-config", "auth", "once", "collect", "status", "latest", "sector", "condition", "quote-test", "quote-batch-test", "quote-top20-test"), nargs="?", default="check-config")
+    parser.add_argument('--request-spacing', type=float, default=None, help='quote-top20-test: 요청 시작 간격(초), 기본/최소 1.1')
+    parser.add_argument('--recollect', choices=('never','failed','all'), default=None, help='quote-top20-test: 기존 시세 재수집 정책, 기본 never; 과거 행 보존')
+    parser.add_argument('--collection-id', help='quote-test: 기존 성공 ka00198 회차 UUID')
+    parser.add_argument('--limit', type=int, choices=(1, 2), default=None, help='quote-test: 순위 상위 1~2종목, 기본 1')
     parser.add_argument("--qry-tp", choices=("1", "2", "3", "4", "5"), default=None, help="1:1분, 2:10분, 3:1시간, 4:당일 누적, 5:30초")
     parser.add_argument("--interval", type=int, default=None, metavar="SECONDS", help="수집 간격(초), 기본 300, 최소 60")
     parser.add_argument("--db", type=Path, default=DEFAULT_DB, help="SQLite 파일 경로")
@@ -92,7 +107,7 @@ def main(argv=None) -> int:
     parser.add_argument('--schedule', action='store_true', help='collect: KST 하루 10회 고정 시간표')
     parser.add_argument('--holidays', type=Path, help='고정 일정용 KRX 휴장일 목록 파일')
     parser.add_argument('--date', help='sector timeline/dashboard: YYYY-MM-DD, 기본 KST 오늘')
-    parser.add_argument('--environment', choices=('mock', 'real'), default=None, help='sector timeline/dashboard/export-priority/workbench/import 또는 condition report의 관측 환경, 기본 mock; API 서버는 .env에서 선택')
+    parser.add_argument('--environment', choices=('mock', 'real'), default=None, help='분석 환경 또는 quote-test 요청 환경, 기본 mock; API 서버는 KIWOOM_ENV와 일치해야 함')
     parser.add_argument('--observed-at', help='외부 테마 확인일 YYYY-MM-DD')
     parser.add_argument('--terms-url', help='사용자가 확인한 출처 이용조건 URL (접속 안 함)')
     parser.add_argument('--terms-note', help='이용조건 확인 메모')
@@ -108,6 +123,33 @@ def main(argv=None) -> int:
     client = None
     store = None
     try:
+        if args.command == 'quote-top20-test':
+            options = dict(environment=args.environment or 'mock', spacing=args.request_spacing if args.request_spacing is not None else 1.1,
+                           recollect=args.recollect or 'never')
+            if args.dry_run:
+                # No credentials, HTTP client, common Store or migration in this branch.
+                report = top20_dry_run(args.db,args.collection_id,**options)
+                print(json.dumps(report,ensure_ascii=False,indent=2))
+                return 0
+            credentials = load_credentials()
+            if credentials.environment != options['environment']:
+                raise ValueError('시세 요청 환경과 KIWOOM_ENV가 다릅니다.')
+            client = BatchQuoteClient(credentials)
+            report, code = top20_execute(args.db,client,args.collection_id,**options)
+            print(json.dumps(report,ensure_ascii=False,indent=2))
+            return code
+        if args.command in ('quote-test', 'quote-batch-test'):
+            credentials = load_credentials()
+            environment = args.environment or 'mock'
+            if credentials.environment != environment:
+                raise ValueError('시세 환경과 KIWOOM_ENV가 다릅니다. 자동 전환하지 않습니다.')
+            batch = args.command == 'quote-batch-test'
+            client = BatchQuoteClient(credentials) if batch else QuoteClient(credentials)
+            report, code = quote_test(args.db, client, args.collection_id,
+                                      environment=environment, limit=2 if batch else args.limit or 1,
+                                      api_id='ka10095' if batch else 'ka10007')
+            print(json.dumps(report, ensure_ascii=False, indent=2))
+            return code
         if command_key == 'sector workbench':
             print(json.dumps(export_workbench(args.db, args.environment or 'mock', args.output), ensure_ascii=False, indent=2))
             return 0

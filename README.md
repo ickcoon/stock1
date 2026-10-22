@@ -1,4 +1,69 @@
-# 키움 REST API 조회순위 수집기 — 인증·단일 조회 단계
+# 키움 REST API TOP20 수집 및 독립 시세 조회
+
+기존 [0198] TOP20 순위 수집과 별도로, 성공 회차의 종목을 현재 시점에 조회·저장하는 시세 CLI를 제공합니다. 모든 새 시세 관측은 `test_mode=1`로 구분합니다. 정기 시세 자동 수집과 주문 기능은 없습니다.
+
+## 시세 확장 검증 결과
+
+2026-10-22 사용자 보고 기준, Windows 병원 PC의 실제 모의서버에서 다음 검증을 완료했습니다. 개발 환경에서 수행한 가상 HTTP 테스트와 사용자의 실제 모의 검증을 구분합니다.
+
+- `ka10007` 단일 종목 시세 조회 및 DB 저장 성공.
+- `ka10095` 2종목 시세 조회 및 DB 저장 성공.
+- 기존 2종목 성공을 보존한 `quote-top20-test`에서 나머지 18종목을 9회 요청. 출력상 미전송 0건, 종목별 성공, issues 없음.
+
+이는 해당 환경·종목·시점의 검증 결과입니다. ka10095의 공식 최대 종목 수와 가격 부호의 구체적 기준은 여전히 미확인입니다. 요청당 최대 2종목 정책을 유지하고, 원본 가격 문자열은 보존하며 절댓값 가격 정규화는 하지 않습니다.
+
+## 추가 CLI
+
+| 명령 | 동작 |
+| --- | --- |
+| `quote-test --collection-id UUID --limit 1` | ka10007로 기존 회차의 상위 1~2종목 조회·저장 |
+| `quote-batch-test --collection-id UUID --limit 2` | ka10095로 상위 2종목을 한 요청으로 조회·저장 |
+| `quote-top20-test --collection-id UUID --dry-run` | TOP20을 한 번 고정하고 기존 시도를 제외한 최대 10개 요청 계획 출력. 키·API 호출·운영 DB 변경 없음 |
+| `quote-top20-test --collection-id UUID` | 최대 2종목씩 순차 조회·저장. 요청 시작 간 최소 1.1초, 429·인증·호출 제한 오류 시 후속 호출 중단 |
+
+```powershell
+# UUID를 같은 mock 환경의 성공한 ka00198 회차로 바꿉니다.
+.\.venv\Scripts\python.exe -m kiwoom_collector quote-top20-test `
+  --collection-id "회차-UUID" --environment mock --db data/stock1.db `
+  --request-spacing 1.1 --recollect never --dry-run
+
+# 실제 API 호출 및 DB 마이그레이션·저장: 대상과 백업을 확인한 후 직접 실행합니다.
+.\.venv\Scripts\python.exe -m kiwoom_collector quote-top20-test `
+  --collection-id "회차-UUID" --environment mock --db data/stock1.db `
+  --request-spacing 1.1 --recollect never
+```
+
+`--request-spacing`으로 간격을 더 늘릴 수 있습니다. `--recollect never`는 기존 시도를 생략하고, `failed`는 성공 이력이 없는 실패·중단 대상을, `all`은 기존 성공까지 새 관측 차수로 수집합니다. 어떤 옵션도 과거 성공 행을 덮어쓰지 않습니다. 결과 불명 `running`과 강제 종료로 남은 잠금은 자동 재전송하지 않습니다.
+
+API 환경은 `KIWOOM_ENV`와 명령의 `--environment`가 일치해야 합니다. 모의 실패 시 실전으로 자동 전환하지 않습니다. 과거 순위 시각, 현재 시세의 API 시각, HTTP 시작·종료 시각은 별도로 보존하며 과거 시세로 소급 취급하지 않습니다.
+
+## 시세 DB 변경 및 기존 수집과의 호환성
+
+시세 명령을 명시적으로 실행할 때만 기존 DB를 트랜잭션으로 확장합니다. 기존 DB를 삭제·초기화하지 않으며, 구 시세 테이블의 제약·기본 키 확장이 필요한 경우 기존 행을 복사·보존하고 실패 시 전체 롤백합니다.
+
+| 테이블/열 | 역할 |
+| --- | --- |
+| `quote_batches` | 순위 회차 FK, 환경·API·테스트 구분, 실행 상태·시각·명세 버전. TOP20의 고정 목록은 `plan_json` |
+| `quote_requests` | 요청 묶음별 대상 코드, HTTP 시작·종료, 상태·응답 코드·허용 시장 필드·진단 |
+| `quote_observations` | `(collection_id, rank)`로 기존 순위 참조. 시세 원본·정규화·API 시각·HTTP 시각, `request_id` FK와 재수집 차수 `attempt` |
+| `quote_top20_locks` | 같은 DB·환경의 중복 실행 차단 |
+
+관측 기본 키는 `(collection_id, rank, api_id, test_mode, attempt)`입니다. 기존 시세는 `attempt=0`으로 보존하고 요청 연결을 추정해 채우지 않습니다. 거래대금은 원본 백만원 단위를 보존하며, 분석용 원화 환산은 Decimal 문자열로 별도 저장합니다.
+
+`collections`·`ranking_records`·종목 마스터·테마 분류와 감사 이력은 시세 확장으로 수정하지 않습니다. 기존 `collect`, `collect --test-now`, `collect --schedule`의 호출 경로에도 시세 조회를 추가하지 않았습니다. 고정 [0198] 일정은 기존 KST **09:20, 09:30, 09:40, 09:50, 10:00, 11:00, 12:00, 13:00, 14:00, 15:00** 그대로입니다.
+
+상세 설명: [ka10007](docs/QUOTES.md), [ka10095](docs/BATCH_QUOTES.md), [TOP20 분할·재개·재수집](docs/TOP20_QUOTES.md), [DB](docs/DATABASE.md).
+
+## 오프라인 회귀 테스트와 Git 제외 파일
+
+```powershell
+.\.venv\Scripts\python.exe -m unittest discover -s tests -v
+git diff --check
+```
+
+가상 HTTP와 임시 DB로 기존 CLI·일정·테마 보존, 시세 실패·누락·부분 성공, 환경 분리, 중복·재개·재수집, 요청 간격, dry-run의 DB/WAL 무변경, 마이그레이션·롤백을 검증합니다. 실제 서버를 호출하는 시세 명령은 오프라인 테스트 명령과 별개입니다.
+
+`.env`·실제 키·SQLite DB/WAL/SHM·`data/`·`data.zip`·생성 HTML/CSV·가상환경은 커밋하지 않습니다. `.env.example`에는 빈 키 자리만 유지합니다.
 
 공식 GitHub의 확인된 명세로 **인증과 조회순위 1회 조회 프로그램을 구현**했습니다. 사용자의 Windows PC에서 모의투자 키로 인증·단일 조회가 성공했고 HTS [0198]과 반환 데이터가 일치했음을 확인했습니다. 이번 서버 선택 변경은 실제 API 호출 없이 오프라인 테스트로 검증했습니다. `collect`로 KST 평일 09:00~15:30 자동 수집과 SQLite 누적 저장을 지원합니다. 주문 기능은 없습니다.
 
