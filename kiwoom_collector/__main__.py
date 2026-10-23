@@ -23,6 +23,7 @@ from .quotes import QuoteClient, BatchQuoteClient, quote_test
 from .top20_quotes import dry_run as top20_dry_run, execute as top20_execute
 from .api_resource import api_resource
 from .integrated_test import integrated_test, fresh_database
+from .quote_fields import fields_test, validate_options as validate_field_options, console_summary
 import math
 
 from .client import KST, KiwoomClient, KiwoomError, DEFAULT_REQUEST_SPACING
@@ -52,10 +53,11 @@ def validate_cli(parser, args):
         parser.error('추가 위치 인자는 sector/condition 하위 명령에서만 사용합니다.')
     policy = {
         'with_top20_quotes': {'collect'},
-        'environment': {'quote-integrated-test', 'sector radar', 'sector timeline', 'sector dashboard', 'sector export-priority',
+        'environment': {'quote-fields-test', 'quote-integrated-test', 'sector radar', 'sector timeline', 'sector dashboard', 'sector export-priority',
                         'sector import', 'sector workbench', 'condition report', 'quote-test', 'quote-batch-test', 'quote-top20-test'},
         'collection_id': {'quote-test', 'quote-batch-test', 'quote-top20-test'}, 'limit': {'quote-test', 'quote-batch-test'},
-        'request_spacing': {'quote-top20-test', 'quote-integrated-test'}, 'recollect': {'quote-top20-test'},
+        'request_spacing': {'quote-fields-test', 'quote-top20-test', 'quote-integrated-test'}, 'recollect': {'quote-top20-test'},
+        'codes': {'quote-fields-test'}, 'time_budget': {'quote-fields-test'}, 'phase': {'quote-fields-test'},
         'output': {'sector radar', 'sector export-untagged', 'sector export-priority', 'sector dashboard', 'sector workbench', 'sector import-report'},
         'date': {'sector radar', 'sector timeline', 'sector dashboard'},
         'source': {'sector tag', 'sector untag', 'sector import', 'sector alias add'},
@@ -71,6 +73,8 @@ def validate_cli(parser, args):
             parser.error('--' + field.replace('_', '-') + ' 지원 명령: ' + ', '.join(sorted(allowed)))
     if key == 'quote-integrated-test' and (args.environment != 'mock' or args.qry_tp not in (None, '1')):
         parser.error('quote-integrated-test는 --environment mock과 --qry-tp 1만 허용합니다.')
+    if key == 'quote-fields-test' and (args.environment != 'real' or args.codes is None):
+        parser.error('quote-fields-test에는 --environment real과 --codes 종목1 종목2가 필요합니다.')
     if key in {'sector radar', 'sector export-untagged', 'sector export-priority', 'sector dashboard', 'sector workbench'} and args.output is None:
         parser.error(key + '에는 --output이 필요합니다.')
     if args.holidays is not None and not args.schedule:
@@ -100,7 +104,10 @@ def main(argv=None) -> int:
                "        export-priority, workbench, provenance, import-report,\n"
                "        alias add, alias list, summary, timeline, dashboard, radar\n"
                "condition: list, fetch, report")
-    parser.add_argument("command", choices=("check-config", "auth", "once", "collect", "status", "latest", "sector", "condition", "quote-test", "quote-batch-test", "quote-top20-test", "quote-integrated-test"), nargs="?", default="check-config")
+    parser.add_argument("command", choices=("check-config", "auth", "once", "collect", "status", "latest", "sector", "condition", "quote-test", "quote-batch-test", "quote-top20-test", "quote-integrated-test", "quote-fields-test"), nargs="?", default="check-config")
+    parser.add_argument('--codes', nargs=2, metavar=('CODE1', 'CODE2'), help='quote-fields-test: 검증 종목 2개')
+    parser.add_argument('--time-budget', type=float, default=None, help='quote-fields-test: 전체 요청 시간 예산 60~300초, 기본 120')
+    parser.add_argument('--phase', choices=('unspecified', 'intraday', 'after-close'), default=None, help='quote-fields-test: 사용자 지정 시간대 라벨 (자동 판정 아님)')
     parser.add_argument('--request-spacing', type=float, default=None, help='TOP20/통합 테스트 요청 시작 간격(초), 기본 1.2, 최소 1.1')
     parser.add_argument('--recollect', choices=('never','failed','all'), default=None, help='quote-top20-test: 기존 시세 재수집 정책, 기본 never; 과거 행 보존')
     parser.add_argument('--collection-id', help='quote-test: 기존 성공 ka00198 회차 UUID')
@@ -124,8 +131,8 @@ def main(argv=None) -> int:
     parser.add_argument('--terms-checked-at', help='이용조건 확인일 YYYY-MM-DD')
     # Without subparsers, intermixing supports options before/between/after positionals.
     args = parser.parse_intermixed_args(argv)
-    if args.command == 'quote-integrated-test' and args.db is None:
-        parser.error('quote-integrated-test에는 --db가 필요합니다.')
+    if args.command in ('quote-integrated-test', 'quote-fields-test') and args.db is None:
+        parser.error(args.command + '에는 --db가 필요합니다.')
     args.db = args.db if args.db is not None else DEFAULT_DB
     command_key = validate_cli(parser, args)
     external_options = any(v is not None for v in (args.observed_at, args.terms_url, args.terms_note, args.terms_checked_at))
@@ -137,6 +144,16 @@ def main(argv=None) -> int:
     store = None
     resources = ExitStack()
     try:
+        if args.command == 'quote-fields-test':
+            options = dict(environment=args.environment,
+                           spacing=args.request_spacing if args.request_spacing is not None else DEFAULT_REQUEST_SPACING,
+                           budget=args.time_budget if args.time_budget is not None else 120,
+                           phase=args.phase or 'unspecified')
+            validate_field_options(args.db, args.codes, **options)  # No credentials, Store or HTTP yet.
+            report, code = fields_test(args.db, load_credentials(), args.codes, **options)
+            print(json.dumps(report, ensure_ascii=False, separators=(',', ':')))
+            print(console_summary(report), file=sys.stderr)
+            return code
         if args.command == 'quote-integrated-test':
             fresh_database(args.db)  # Fail before credentials, Store, or HTTP client.
             report, code = integrated_test(args.db, load_credentials(), environment=args.environment,
