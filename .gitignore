@@ -14,6 +14,7 @@ logs/
 *.sqlite-*
 *.sqlite3-*
 *.log.*
+*.api.lock
 
 # Local data archives and generated reports are never release source.
 data.zip

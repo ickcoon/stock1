@@ -17,6 +17,7 @@ import requests
 
 from .client import KST, KiwoomClient, _code
 from .errors import KiwoomError
+from .api_resource import exclusive_quotes
 
 SPEC_VERSION = '953e5dbff123f437ab4d11a78a95191a685eb51f'
 VALUE_FIELDS = ('cur_prc', 'flu_rt', 'trde_qty', 'trde_prica',
@@ -45,6 +46,10 @@ class Quote:
 class QuoteInterrupted(KeyboardInterrupt):
     def __init__(self, quote):
         self.quote = quote
+
+
+class QuoteDeadlineReached(ValueError):
+    """No quote HTTP was sent because the scheduling budget expired."""
 
 
 class QuoteClient(KiwoomClient):
@@ -178,6 +183,11 @@ def normalize_quote(raw, api_id):
 
 class BatchQuoteClient(QuoteClient):
     request_interval = 1.0
+    request_deadline = None
+
+    def _check_deadline(self, budget):
+        if self.request_deadline is not None and datetime.now(KST) + timedelta(seconds=budget) >= self.request_deadline:
+            raise QuoteDeadlineReached('다음 순위 수집 보호: 시세 요청 생략')
 
     def fetch_quotes(self, codes):
         """Experimental ka10095, at most two codes and one HTTP request."""
@@ -186,6 +196,7 @@ class BatchQuoteClient(QuoteClient):
                 or len('|'.join(codes)) > 20):
             raise ValueError('ka10095 테스트 입력은 길이 20 이내의 고유 종목 1~2개여야 합니다.')
         common = Quote()
+        self._check_deadline(60)  # authentication + pacing + one quote, conservative budget
         def failed(issue):
             return {c: Quote('error', common.request_started_at, common.request_finished_at,
                              common.http_status, common.return_code, issues=[issue]) for c in codes}
@@ -197,6 +208,7 @@ class BatchQuoteClient(QuoteClient):
         if self._last_request is not None:
             time.sleep(max(0, self.request_interval - (time.monotonic() - self._last_request)))
         self._last_request = time.monotonic()
+        self._check_deadline(30)
         common.request_started_at = stamp()
         try:
             response = self.session.post(self.credentials.base_url + '/api/dostk/stkinfo',
@@ -321,6 +333,7 @@ def migrate_quotes(db):
         BEGIN SELECT RAISE(ABORT,'quote parent mismatch'); END''')
 
 
+@exclusive_quotes
 def quote_test(path, client, collection_id, *, environment='mock', limit=1, api_id='ka10007'):
     """Observe existing top 1/2 now, not a reconstruction of the ranking timestamp.
 

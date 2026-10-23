@@ -1,5 +1,6 @@
 """Read-only authentication, snapshots, scheduled collection and local history."""
 from datetime import datetime
+from contextlib import ExitStack
 import argparse
 import json
 import logging
@@ -20,6 +21,7 @@ from .external_tags import external_command, is_external_csv
 from .workbench import export_workbench
 from .quotes import QuoteClient, BatchQuoteClient, quote_test
 from .top20_quotes import dry_run as top20_dry_run, execute as top20_execute
+from .api_resource import api_resource
 import math
 
 from .client import KST, KiwoomClient, KiwoomError
@@ -48,6 +50,7 @@ def validate_cli(parser, args):
     elif values:
         parser.error('추가 위치 인자는 sector/condition 하위 명령에서만 사용합니다.')
     policy = {
+        'with_top20_quotes': {'collect'},
         'environment': {'sector radar', 'sector timeline', 'sector dashboard', 'sector export-priority',
                         'sector import', 'sector workbench', 'condition report', 'quote-test', 'quote-batch-test', 'quote-top20-test'},
         'collection_id': {'quote-test', 'quote-batch-test', 'quote-top20-test'}, 'limit': {'quote-test', 'quote-batch-test'},
@@ -69,6 +72,8 @@ def validate_cli(parser, args):
         parser.error(key + '에는 --output이 필요합니다.')
     if args.holidays is not None and not args.schedule:
         parser.error('--holidays는 collect --schedule과 함께 사용하세요.')
+    if args.with_top20_quotes and not args.schedule:
+        parser.error('--with-top20-quotes는 collect --schedule과 함께 사용하세요.')
     if args.schedule and (args.test_now or args.interval is not None):
         parser.error('--schedule은 --test-now/--interval과 함께 사용할 수 없습니다.')
     if args.interval is not None and args.interval < 60:
@@ -106,6 +111,7 @@ def main(argv=None) -> int:
     parser.add_argument("--dry-run", action="store_true", help="sector import: 검증만, 태그 저장 안 함")
     parser.add_argument("--output", type=Path, help="sector export-untagged/export-priority/workbench/dashboard/import-report: 새 CSV/HTML/JSON 경로")
     parser.add_argument('--schedule', action='store_true', help='collect: KST 하루 10회 고정 시간표')
+    parser.add_argument('--with-top20-quotes', action='store_true', help='collect --schedule: 신규 성공 회차에만 ka10095 후속 시세 수집 (기본 꺼짐)')
     parser.add_argument('--holidays', type=Path, help='고정 일정용 KRX 휴장일 목록 파일')
     parser.add_argument('--date', help='sector timeline/dashboard/radar: YYYY-MM-DD, 기본 KST 오늘')
     parser.add_argument('--environment', choices=('mock', 'real'), default=None, help='분석 환경 또는 quote-test 요청 환경, 기본 mock; API 서버는 KIWOOM_ENV와 일치해야 함')
@@ -123,6 +129,7 @@ def main(argv=None) -> int:
     condition_client = None
     client = None
     store = None
+    resources = ExitStack()
     try:
         if args.command == 'quote-top20-test':
             options = dict(environment=args.environment or 'mock', spacing=args.request_spacing if args.request_spacing is not None else 1.1,
@@ -133,6 +140,7 @@ def main(argv=None) -> int:
                 print(json.dumps(report,ensure_ascii=False,indent=2))
                 return 0
             credentials = load_credentials()
+            resources.enter_context(api_resource(args.db, credentials.environment))
             if credentials.environment != options['environment']:
                 raise ValueError('시세 요청 환경과 KIWOOM_ENV가 다릅니다.')
             client = BatchQuoteClient(credentials)
@@ -141,6 +149,7 @@ def main(argv=None) -> int:
             return code
         if args.command in ('quote-test', 'quote-batch-test'):
             credentials = load_credentials()
+            resources.enter_context(api_resource(args.db, credentials.environment))
             environment = args.environment or 'mock'
             if credentials.environment != environment:
                 raise ValueError('시세 환경과 KIWOOM_ENV가 다릅니다. 자동 전환하지 않습니다.')
@@ -242,12 +251,16 @@ def main(argv=None) -> int:
         if args.command == "check-config":
             print("APP KEY / SECRET KEY 설정 확인 완료. API 호출은 수행하지 않았습니다.")
             return 0
-        client = KiwoomClient(credentials)
+        resources.enter_context(api_resource(args.db, credentials.environment))
+        client = BatchQuoteClient(credentials) if args.with_top20_quotes else KiwoomClient(credentials)
         if args.command == "collect":
             if args.schedule:
                 holidays = load_holidays(args.holidays)
                 print(f"고정 일정 KST 하루 10회: {', '.join(SLOTS)}; 휴장일 파일: {'사용' if args.holidays else '없음 (주말만 자동 제외)'}")
-                collect_schedule(client, store, credentials.environment, args.qry_tp, holidays)
+                if args.with_top20_quotes:
+                    collect_schedule(client, store, credentials.environment, args.qry_tp, holidays, with_quotes=True)
+                else:
+                    collect_schedule(client, store, credentials.environment, args.qry_tp, holidays)
                 return 0
             if args.test_now:
                 print(f"DB: {store.path}; test_mode=true, 시간 제한 무시, 조회 1회 후 종료")
@@ -290,6 +303,7 @@ def main(argv=None) -> int:
             client.close()
         if store is not None:
             store.close()
+        resources.close()
 
 
 if __name__ == "__main__":

@@ -991,3 +991,9 @@ Start-Process .\data\sector-radar-20261020-mock.html
 ```
 
 시점 비교, 단위·누락값 처리, 실제 스키마 확인 결과는 [SECTOR_RADAR.md](docs/SECTOR_RADAR.md)를 참고하세요.
+
+### 정기 순위·시세 선택적 연동
+
+`collect --schedule --with-top20-quotes`는 방금 성공한 동일 회차의 종목만 ka10095로 후속 수집합니다.
+옵션이 없으면 기존처럼 순위만 수집합니다. 운영/테스트 시세 분리, 시간 예산, 공유 잠금 및
+실패·복구 정책과 mock/real 명령 예시는 [SCHEDULED_QUOTES.md](docs/SCHEDULED_QUOTES.md)를 참고하세요.

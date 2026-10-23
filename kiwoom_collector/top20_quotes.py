@@ -6,6 +6,7 @@ from pathlib import Path
 import sqlite3
 import tempfile
 from uuid import uuid4
+from .api_resource import exclusive_quotes
 
 from .quotes import (CODE, SPEC_VERSION, VALUE_FIELDS, QuoteInterrupted,
                      migrate_quotes, normalize_quote, stamp)
@@ -71,14 +72,14 @@ def eligible(previous, recollect):
     return recollect == 'all' or (recollect == 'failed' and not previous.get('has_success', previous['status']=='success'))
 
 
-def latest_observations(db, collection_id):
+def latest_observations(db, collection_id, test_mode=1):
     exists = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='quote_observations'").fetchone()
     if not exists:
         return {}
     columns = {r[1] for r in db.execute('PRAGMA table_info(quote_observations)')}
     order = 'attempt' if 'attempt' in columns else 'rowid'
     rows = db.execute('''SELECT * FROM quote_observations WHERE collection_id=?
-        AND api_id='ka10095' AND test_mode=1 ORDER BY ''' + order, (collection_id,)).fetchall()
+        AND api_id='ka10095' AND test_mode=? ORDER BY ''' + order, (collection_id,test_mode)).fetchall()
     previous = {}
     for row in rows:
         old_success = previous.get(row['rank'],{}).get('has_success',False)
@@ -86,7 +87,7 @@ def latest_observations(db, collection_id):
     return previous
 
 
-def make_plan(db, collection_id, environment, spacing, recollect):
+def make_plan(db, collection_id, environment, spacing, recollect, test_mode=1):
     """Called once per execution inside a read/write snapshot transaction."""
     parent = db.execute('SELECT * FROM collections WHERE id=?', (collection_id,)).fetchone()
     if parent is None or parent['api_id'] != 'ka00198' or parent['status'] != 'success':
@@ -99,7 +100,7 @@ def make_plan(db, collection_id, environment, spacing, recollect):
         raise ValueError('TOP20에 유효한 종목코드가 필요합니다. 누락 코드를 추측하지 않습니다.')
     if len({r['stk_cd'] for r in rows}) != len(rows):
         raise ValueError('TOP20 종목코드가 중복되었습니다.')
-    previous = latest_observations(db, collection_id)
+    previous = latest_observations(db, collection_id, test_mode)
     selected = []
     skipped = []
     for row in rows:
@@ -121,7 +122,7 @@ def make_plan(db, collection_id, environment, spacing, recollect):
     locks = db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='quote_top20_locks'").fetchone()
     blocked = db.execute('SELECT batch_id FROM quote_top20_locks WHERE environment=?', (environment,)).fetchone() if locks else None
     return {'collection_id': collection_id, 'environment': environment, 'api_id': 'ka10095',
-            'test_mode': True, 'ranking_collected_at': parent['collected_at'],
+            'test_mode': bool(test_mode), 'ranking_collected_at': parent['collected_at'],
             'ranking_scheduled_at': parent['scheduled_at'] if 'scheduled_at' in parent.keys() else None,
             'temporal_relation': 'current_quote_for_historical_ranking',
             'request_spacing_seconds': spacing, 'recollect': recollect,
@@ -179,6 +180,7 @@ def stop_reason(quotes):
     return None
 
 
+@exclusive_quotes
 def execute(path, client, collection_id, *, environment='mock', spacing=1.1, recollect='never'):
     validate_options(environment, spacing, recollect)
     if client.credentials.environment != environment:

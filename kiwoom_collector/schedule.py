@@ -3,9 +3,14 @@ from datetime import date, datetime, timedelta
 from pathlib import Path
 import logging
 import time
+from contextlib import nullcontext
+import sqlite3
 
 from .client import KST
 from .collector import _attempt
+from .api_resource import api_resource
+from .errors import KiwoomError
+from .scheduled_quotes import run_scheduled_quotes, QuotePolicy
 
 SLOTS = ('09:20', '09:30', '09:40', '09:50', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00')
 LOG = logging.getLogger(__name__)
@@ -47,7 +52,15 @@ def next_slot(now, holidays=frozenset()):
 
 
 def collect_schedule(client, store, environment, qry_tp='1', holidays=frozenset(),
-                     now=lambda: datetime.now(KST), sleep=time.sleep):
+                     now=lambda: datetime.now(KST), sleep=time.sleep, *, with_quotes=False,
+                     quote_policy=None):
+    with api_resource(store.path, environment) if with_quotes else nullcontext():
+        _collect_schedule(client, store, environment, qry_tp, holidays, now, sleep,
+                          with_quotes, quote_policy or QuotePolicy())
+
+
+def _collect_schedule(client, store, environment, qry_tp, holidays, now, sleep,
+                      with_quotes, quote_policy):
     due = next_slot(now(), holidays)
     while True:
         current = now().astimezone(KST)
@@ -58,7 +71,18 @@ def collect_schedule(client, store, environment, qry_tp='1', holidays=frozenset(
             identifier = store.begin(current, environment, qry_tp, scheduled_at=due)
             if identifier is not None:
                 LOG.info('고정 일정: 예정=%s 실제시작=%s', due.isoformat(), current.isoformat())
-                _attempt(client, store, identifier, qry_tp)
+                result = _attempt(client, store, identifier, qry_tp)
+                if with_quotes and result == 0 and store.db.execute(
+                        'SELECT status FROM collections WHERE id=?', (identifier,)).fetchone()['status'] == 'success':
+                    following = next_slot(due + timedelta(microseconds=1), holidays)
+                    try:
+                        report = run_scheduled_quotes(store.path, client, identifier,
+                            environment=environment, created_at=current,
+                            next_scheduled_at=following, now=now, policy=quote_policy)
+                        LOG.info('후속 시세: 회차=%s 상태=%s 사유=%s', identifier, report['status'], report['reason'])
+                    except (ValueError, KiwoomError, sqlite3.Error, OSError) as exc:
+                        # Ranking success is already committed; never rewrite it.
+                        LOG.error('후속 시세 중단: 회차=%s 오류유형=%s (순위 성공 보존)', identifier, type(exc).__name__)
             else:
                 LOG.info('이미 시도한 예정 시각: 중복 호출/저장 생략 %s', due.isoformat())
         else:
