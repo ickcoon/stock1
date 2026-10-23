@@ -5,6 +5,7 @@ import sqlite3
 import tempfile
 from unittest import TestCase
 from unittest.mock import Mock, patch
+from clock_helpers import request_clock
 
 from kiwoom_collector.client import KST, KiwoomClient, KiwoomError, Snapshot
 from kiwoom_collector.config import Credentials
@@ -48,7 +49,7 @@ class TestNowTests(TestCase):
             (200, {'return_code': 8005}, {}),
             (200, {'return_code': 0, 'item_inq_rank': []}, {'cont-yn': 'Y', 'next-key': 'next'}),
         ):
-            with self.subTest(status=status, body=body), patch('kiwoom_collector.client.requests.Session') as factory, patch('kiwoom_collector.client.time.sleep'):
+            with self.subTest(status=status, body=body), patch('kiwoom_collector.client.requests.Session') as factory, request_clock():
                 client = KiwoomClient(Credentials('test-key', 'test-secret'))
                 auth = Mock(status_code=200, headers={})
                 auth.json.return_value = {'token': 'test-token', 'token_type': 'bearer', 'expires_dt': '20990101000000'}

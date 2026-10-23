@@ -5,6 +5,7 @@ Sources and deliberate limitations are recorded in docs/API_SPEC.md.
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 import logging
+import math
 import re
 import time
 
@@ -18,6 +19,8 @@ KST = timezone(timedelta(hours=9))
 LOG = logging.getLogger(__name__)
 AUTH_CODES = {8005, 8031, 8103}
 RATE_CODES = {1700, 1701, 1702}
+MIN_REQUEST_SPACING = 1.1
+DEFAULT_REQUEST_SPACING = 1.2
 
 
 @dataclass
@@ -53,6 +56,9 @@ def _auth_error(code: int | None, data: dict) -> bool:
 
 
 class KiwoomClient:
+    # Local safety policy shared by mock/real and authentication/ranking/quotes.
+    request_interval = DEFAULT_REQUEST_SPACING
+
     def __init__(self, credentials: Credentials):
         self.credentials = credentials
         # Only the two documented hosts; no arbitrary URL or order API interface.
@@ -64,20 +70,34 @@ class KiwoomClient:
     def close(self) -> None:
         self.session.close()
 
+    def _request(self, path, body, headers, *, before_send=None):
+        """Pace consecutive Session.post starts, including auth and retries.
+
+        perf_counter uses Windows QPC rather than the coarse GetTickCount64
+        clock used by Python 3.11 monotonic. Recheck after every sleep so an
+        early wakeup cannot shorten the interval. This is not a wire-time SLA.
+        """
+        if not math.isfinite(self.request_interval) or self.request_interval < MIN_REQUEST_SPACING:
+            raise ValueError('요청 간격은 유한한 1.1초 이상이어야 합니다.')
+        url = self.credentials.base_url + path
+        request_headers = {"Content-Type": "application/json;charset=UTF-8", **headers}
+        if self._last_request is not None:
+            due = self._last_request + self.request_interval
+            while True:
+                remaining = due - time.perf_counter()
+                if remaining <= 0:
+                    break
+                time.sleep(remaining)
+        if before_send is not None:
+            before_send()  # Recheck quote deadline and stamp AFTER pacing.
+        self._last_request = time.perf_counter()
+        return self.session.post(url, json=body, headers=request_headers,
+                                 timeout=(5, 20), allow_redirects=False)
+
     def _post(self, path: str, body: dict, headers: dict, *, attempts=3):
         for attempt in range(attempts):
-            # Conservative client policy, NOT a claimed official rate limit.
-            if self._last_request is not None:
-                time.sleep(max(0, 1 - (time.monotonic() - self._last_request)))
-            self._last_request = time.monotonic()
             try:
-                response = self.session.post(
-                    self.credentials.base_url + path,
-                    json=body,
-                    headers={"Content-Type": "application/json;charset=UTF-8", **headers},
-                    timeout=(5, 20),
-                    allow_redirects=False,
-                )
+                response = self._request(path, body, headers)
             except requests.exceptions.SSLError:
                 raise KiwoomError("TLS 인증서 검증 실패. 인증서/프록시 설정을 확인하세요.") from None
             except (requests.Timeout, requests.ConnectionError):

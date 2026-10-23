@@ -51,6 +51,7 @@ class Top20Tests(fixtures.QuoteFixture):
         plan=json.loads(output.call_args.args[0])
         self.assertEqual(code,0)
         self.assertEqual(plan['actual_api_calls'],0)
+        self.assertEqual(plan['request_spacing_seconds'],1.2)
         self.assertEqual(plan['expected_quote_requests'],10)
         self.assertEqual(plan['requests'][0]['codes'],['100001','100002'])
         self.assertEqual(plan['requests'][-1]['ranks'],[19,20])
@@ -113,8 +114,8 @@ class Top20Tests(fixtures.QuoteFixture):
             starts.append(clock[0])
             return reply([row(c) for c in kwargs['json']['stk_cd'].split('|')])
         self.session.post.side_effect=post
-        with patch('kiwoom_collector.quotes.time.monotonic',side_effect=lambda:clock[0]), \
-             patch('kiwoom_collector.quotes.time.sleep',side_effect=sleep):
+        with patch('kiwoom_collector.client.time.perf_counter',side_effect=lambda:clock[0]), \
+             patch('kiwoom_collector.client.time.sleep',side_effect=sleep):
             execute(self.path,self.client,self.identifier,spacing=1.75)
         self.assertEqual(len(starts),10)
         self.assertTrue(all(b-a>=1.75-1e-9 for a,b in zip(starts,starts[1:])))

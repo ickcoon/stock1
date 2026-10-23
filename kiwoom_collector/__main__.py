@@ -22,9 +22,10 @@ from .workbench import export_workbench
 from .quotes import QuoteClient, BatchQuoteClient, quote_test
 from .top20_quotes import dry_run as top20_dry_run, execute as top20_execute
 from .api_resource import api_resource
+from .integrated_test import integrated_test, fresh_database
 import math
 
-from .client import KST, KiwoomClient, KiwoomError
+from .client import KST, KiwoomClient, KiwoomError, DEFAULT_REQUEST_SPACING
 from .config import load_credentials
 
 
@@ -51,10 +52,10 @@ def validate_cli(parser, args):
         parser.error('추가 위치 인자는 sector/condition 하위 명령에서만 사용합니다.')
     policy = {
         'with_top20_quotes': {'collect'},
-        'environment': {'sector radar', 'sector timeline', 'sector dashboard', 'sector export-priority',
+        'environment': {'quote-integrated-test', 'sector radar', 'sector timeline', 'sector dashboard', 'sector export-priority',
                         'sector import', 'sector workbench', 'condition report', 'quote-test', 'quote-batch-test', 'quote-top20-test'},
         'collection_id': {'quote-test', 'quote-batch-test', 'quote-top20-test'}, 'limit': {'quote-test', 'quote-batch-test'},
-        'request_spacing': {'quote-top20-test'}, 'recollect': {'quote-top20-test'},
+        'request_spacing': {'quote-top20-test', 'quote-integrated-test'}, 'recollect': {'quote-top20-test'},
         'output': {'sector radar', 'sector export-untagged', 'sector export-priority', 'sector dashboard', 'sector workbench', 'sector import-report'},
         'date': {'sector radar', 'sector timeline', 'sector dashboard'},
         'source': {'sector tag', 'sector untag', 'sector import', 'sector alias add'},
@@ -62,12 +63,14 @@ def validate_cli(parser, args):
         'observed_at': {'sector import'}, 'terms_url': {'sector import'},
         'terms_note': {'sector import'}, 'terms_checked_at': {'sector import'},
         'interval': {'collect'}, 'schedule': {'collect'}, 'test_now': {'collect'},
-        'holidays': {'collect'}, 'qry_tp': {'once', 'collect', 'sector timeline', 'sector dashboard'},
+        'holidays': {'collect'}, 'qry_tp': {'quote-integrated-test', 'once', 'collect', 'sector timeline', 'sector dashboard'},
     }
     for field, allowed in policy.items():
         value = getattr(args, field)
         if value is not None and value is not False and key not in allowed:
             parser.error('--' + field.replace('_', '-') + ' 지원 명령: ' + ', '.join(sorted(allowed)))
+    if key == 'quote-integrated-test' and (args.environment != 'mock' or args.qry_tp not in (None, '1')):
+        parser.error('quote-integrated-test는 --environment mock과 --qry-tp 1만 허용합니다.')
     if key in {'sector radar', 'sector export-untagged', 'sector export-priority', 'sector dashboard', 'sector workbench'} and args.output is None:
         parser.error(key + '에는 --output이 필요합니다.')
     if args.holidays is not None and not args.schedule:
@@ -97,14 +100,14 @@ def main(argv=None) -> int:
                "        export-priority, workbench, provenance, import-report,\n"
                "        alias add, alias list, summary, timeline, dashboard, radar\n"
                "condition: list, fetch, report")
-    parser.add_argument("command", choices=("check-config", "auth", "once", "collect", "status", "latest", "sector", "condition", "quote-test", "quote-batch-test", "quote-top20-test"), nargs="?", default="check-config")
-    parser.add_argument('--request-spacing', type=float, default=None, help='quote-top20-test: 요청 시작 간격(초), 기본/최소 1.1')
+    parser.add_argument("command", choices=("check-config", "auth", "once", "collect", "status", "latest", "sector", "condition", "quote-test", "quote-batch-test", "quote-top20-test", "quote-integrated-test"), nargs="?", default="check-config")
+    parser.add_argument('--request-spacing', type=float, default=None, help='TOP20/통합 테스트 요청 시작 간격(초), 기본 1.2, 최소 1.1')
     parser.add_argument('--recollect', choices=('never','failed','all'), default=None, help='quote-top20-test: 기존 시세 재수집 정책, 기본 never; 과거 행 보존')
     parser.add_argument('--collection-id', help='quote-test: 기존 성공 ka00198 회차 UUID')
     parser.add_argument('--limit', type=int, choices=(1, 2), default=None, help='quote-test: 순위 상위 1~2종목, 기본 1')
     parser.add_argument("--qry-tp", choices=("1", "2", "3", "4", "5"), default=None, help="1:1분, 2:10분, 3:1시간, 4:당일 누적, 5:30초")
     parser.add_argument("--interval", type=int, default=None, metavar="SECONDS", help="수집 간격(초), 기본 300, 최소 60")
-    parser.add_argument("--db", type=Path, default=DEFAULT_DB, help="SQLite 파일 경로")
+    parser.add_argument("--db", type=Path, default=None, help="SQLite 파일 경로 (통합 테스트는 신규 경로 필수)")
     parser.add_argument("--test-now", action="store_true", help="collect 전용: 시간 제한 없이 조회 1회 저장 후 종료")
     parser.add_argument("sector_args", nargs="*", help="sector 또는 condition 하위 명령 및 인자")
     parser.add_argument("--source", help="섹터 분류 출처 (기본 수동, CSV 가져오기는 CSV)")
@@ -121,6 +124,9 @@ def main(argv=None) -> int:
     parser.add_argument('--terms-checked-at', help='이용조건 확인일 YYYY-MM-DD')
     # Without subparsers, intermixing supports options before/between/after positionals.
     args = parser.parse_intermixed_args(argv)
+    if args.command == 'quote-integrated-test' and args.db is None:
+        parser.error('quote-integrated-test에는 --db가 필요합니다.')
+    args.db = args.db if args.db is not None else DEFAULT_DB
     command_key = validate_cli(parser, args)
     external_options = any(v is not None for v in (args.observed_at, args.terms_url, args.terms_note, args.terms_checked_at))
     external_action = command_key in {'sector export-priority', 'sector alias add', 'sector alias list',
@@ -131,8 +137,14 @@ def main(argv=None) -> int:
     store = None
     resources = ExitStack()
     try:
+        if args.command == 'quote-integrated-test':
+            fresh_database(args.db)  # Fail before credentials, Store, or HTTP client.
+            report, code = integrated_test(args.db, load_credentials(), environment=args.environment,
+                                          spacing=args.request_spacing if args.request_spacing is not None else DEFAULT_REQUEST_SPACING)
+            print(json.dumps(report, ensure_ascii=False, indent=2))
+            return code
         if args.command == 'quote-top20-test':
-            options = dict(environment=args.environment or 'mock', spacing=args.request_spacing if args.request_spacing is not None else 1.1,
+            options = dict(environment=args.environment or 'mock', spacing=args.request_spacing if args.request_spacing is not None else DEFAULT_REQUEST_SPACING,
                            recollect=args.recollect or 'never')
             if args.dry_run:
                 # No credentials, HTTP client, common Store or migration in this branch.

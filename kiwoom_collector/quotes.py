@@ -9,7 +9,6 @@ import json
 from pathlib import Path
 import re
 import sqlite3
-import time
 from decimal import Decimal, InvalidOperation, localcontext
 from uuid import uuid4
 
@@ -68,18 +67,12 @@ class QuoteClient(KiwoomClient):
         except KiwoomError:
             result.issues = ['authentication_failed']
             return result
-        if self._last_request is not None:
-            time.sleep(max(0, 1 - (time.monotonic() - self._last_request)))
-        self._last_request = time.monotonic()
-        result.request_started_at = stamp()
+        def before_send():
+            result.request_started_at = stamp()
         try:
-            response = self.session.post(
-                self.credentials.base_url + '/api/dostk/mrkcond',
-                json={'stk_cd': stock_code},
-                headers={'Content-Type': 'application/json;charset=UTF-8',
-                         'api-id': 'ka10007', 'authorization': 'Bearer ' + self.token.value},
-                timeout=(5, 20), allow_redirects=False,
-            )
+            response = self._request('/api/dostk/mrkcond', {'stk_cd': stock_code},
+                {'api-id': 'ka10007', 'authorization': 'Bearer ' + self.token.value},
+                before_send=before_send)
         except KeyboardInterrupt:
             result.status = 'interrupted'
             result.issues = ['request_interrupted']
@@ -182,7 +175,6 @@ def normalize_quote(raw, api_id):
 
 
 class BatchQuoteClient(QuoteClient):
-    request_interval = 1.0
     request_deadline = None
 
     def _check_deadline(self, budget):
@@ -205,17 +197,14 @@ class BatchQuoteClient(QuoteClient):
                 self.authenticate(attempts=1)
         except KiwoomError:
             return failed('authentication_failed')
-        if self._last_request is not None:
-            time.sleep(max(0, self.request_interval - (time.monotonic() - self._last_request)))
-        self._last_request = time.monotonic()
-        self._check_deadline(30)
-        common.request_started_at = stamp()
+        self._check_deadline(30)  # Authentication may have consumed the remaining budget.
+        def before_send():
+            self._check_deadline(30)
+            common.request_started_at = stamp()
         try:
-            response = self.session.post(self.credentials.base_url + '/api/dostk/stkinfo',
-                json={'stk_cd': '|'.join(codes)},
-                headers={'Content-Type': 'application/json;charset=UTF-8',
-                         'api-id': 'ka10095', 'authorization': 'Bearer ' + self.token.value},
-                timeout=(5,20), allow_redirects=False)
+            response = self._request('/api/dostk/stkinfo', {'stk_cd': '|'.join(codes)},
+                {'api-id': 'ka10095', 'authorization': 'Bearer ' + self.token.value},
+                before_send=before_send)
         except KeyboardInterrupt:
             raise QuoteInterrupted(common) from None
         except requests.RequestException:

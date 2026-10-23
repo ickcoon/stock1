@@ -9,6 +9,7 @@ import unittest
 from unittest.mock import patch, Mock
 
 import requests
+from clock_helpers import request_clock
 
 from kiwoom_collector.client import KST, Snapshot, Token
 from kiwoom_collector.config import Credentials
@@ -34,9 +35,7 @@ class QuoteFixture(unittest.TestCase):
         self.patch = patch('kiwoom_collector.client.requests.Session')
         self.session = self.patch.start().return_value
         self.addCleanup(self.patch.stop)
-        sleeper = patch('kiwoom_collector.quotes.time.sleep')
-        sleeper.start()
-        self.addCleanup(sleeper.stop)
+        self.request_clock = self.enterContext(request_clock())
         self.client = QuoteClient(Credentials('key', 'secret'))
         self.client.token = Token('token', datetime.now(KST) + timedelta(hours=1))
         self.addCleanup(self.client.close)

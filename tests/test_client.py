@@ -3,6 +3,7 @@ from datetime import datetime, timedelta
 from unittest import TestCase
 from unittest.mock import Mock, patch
 import requests
+from clock_helpers import request_clock
 
 from kiwoom_collector.client import KiwoomClient, KiwoomError, KST
 from kiwoom_collector.config import Credentials
@@ -30,9 +31,7 @@ class ClientTests(TestCase):
         self.session_patch = patch("kiwoom_collector.client.requests.Session")
         self.session = self.session_patch.start().return_value
         self.addCleanup(self.session_patch.stop)
-        self.sleep_patch = patch("kiwoom_collector.client.time.sleep")
-        self.sleep_patch.start()
-        self.addCleanup(self.sleep_patch.stop)
+        self.request_clock = self.enterContext(request_clock())
         self.client = KiwoomClient(Credentials("test-key", "test-secret"))
         self.addCleanup(self.client.close)
 

@@ -6,6 +6,7 @@ from pathlib import Path
 import sqlite3
 import tempfile
 from uuid import uuid4
+from .client import DEFAULT_REQUEST_SPACING
 from .api_resource import exclusive_quotes
 
 from .quotes import (CODE, SPEC_VERSION, VALUE_FIELDS, QuoteInterrupted,
@@ -132,7 +133,7 @@ def make_plan(db, collection_id, environment, spacing, recollect, test_mode=1):
             'minimum_start_span_seconds': max(0, len(chunks)-1) * spacing}
 
 
-def dry_run(path, collection_id, *, environment='mock', spacing=1.1, recollect='never'):
+def dry_run(path, collection_id, *, environment='mock', spacing=DEFAULT_REQUEST_SPACING, recollect='never'):
     validate_options(environment, spacing, recollect)
     with read_snapshot(path) as db:
         db.execute('BEGIN')
@@ -181,7 +182,7 @@ def stop_reason(quotes):
 
 
 @exclusive_quotes
-def execute(path, client, collection_id, *, environment='mock', spacing=1.1, recollect='never'):
+def execute(path, client, collection_id, *, environment='mock', spacing=DEFAULT_REQUEST_SPACING, recollect='never'):
     validate_options(environment, spacing, recollect)
     if client.credentials.environment != environment:
         raise ValueError('KIWOOM_ENV와 요청 환경이 다릅니다. 자동 전환하지 않습니다.')

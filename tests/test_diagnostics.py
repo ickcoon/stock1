@@ -7,6 +7,7 @@ import sqlite3
 import tempfile
 from unittest import TestCase
 from unittest.mock import Mock, patch
+from clock_helpers import request_clock
 
 from kiwoom_collector.client import KST, KiwoomClient
 from kiwoom_collector.collector import test_now
@@ -27,9 +28,7 @@ class DiagnosticsTests(TestCase):
         self.session_patch = patch('kiwoom_collector.client.requests.Session')
         self.session = self.session_patch.start().return_value
         self.addCleanup(self.session_patch.stop)
-        self.sleep_patch = patch('kiwoom_collector.client.time.sleep')
-        self.sleep_patch.start()
-        self.addCleanup(self.sleep_patch.stop)
+        self.request_clock = self.enterContext(request_clock())
         self.client = KiwoomClient(Credentials('secret-app-key', 'secret-secret-key'))
         self.addCleanup(self.client.close)
 

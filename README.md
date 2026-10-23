@@ -1,6 +1,8 @@
 # 키움 REST API TOP20 수집 및 독립 시세 조회
 
-기존 [0198] TOP20 순위 수집과 별도로, 성공 회차의 종목을 현재 시점에 조회·저장하는 시세 CLI를 제공합니다. 모든 새 시세 관측은 `test_mode=1`로 구분합니다. 정기 시세 자동 수집과 주문 기능은 없습니다.
+기존 [0198] TOP20 순위 수집과 함께 독립 시세 테스트 CLI 및 선택적인 동일 회차 시세 연동을 제공합니다.
+기본 정기 수집은 순위만 저장하며, `--with-top20-quotes`로 활성화한 정기 시세는 `test_mode=0`,
+명시적 시세 테스트는 `test_mode=1`로 구분합니다. 주문 기능은 없습니다.
 
 ## 시세 확장 검증 결과
 
@@ -19,18 +21,18 @@
 | `quote-test --collection-id UUID --limit 1` | ka10007로 기존 회차의 상위 1~2종목 조회·저장 |
 | `quote-batch-test --collection-id UUID --limit 2` | ka10095로 상위 2종목을 한 요청으로 조회·저장 |
 | `quote-top20-test --collection-id UUID --dry-run` | TOP20을 한 번 고정하고 기존 시도를 제외한 최대 10개 요청 계획 출력. 키·API 호출·운영 DB 변경 없음 |
-| `quote-top20-test --collection-id UUID` | 최대 2종목씩 순차 조회·저장. 요청 시작 간 최소 1.1초, 429·인증·호출 제한 오류 시 후속 호출 중단 |
+| `quote-top20-test --collection-id UUID` | 최대 2종목씩 순차 조회·저장. 요청 시작 간 기본 1.2초·최소 1.1초, 429·인증·호출 제한 오류 시 후속 호출 중단 |
 
 ```powershell
 # UUID를 같은 mock 환경의 성공한 ka00198 회차로 바꿉니다.
 .\.venv\Scripts\python.exe -m kiwoom_collector quote-top20-test `
   --collection-id "회차-UUID" --environment mock --db data/stock1.db `
-  --request-spacing 1.1 --recollect never --dry-run
+  --request-spacing 1.2 --recollect never --dry-run
 
 # 실제 API 호출 및 DB 마이그레이션·저장: 대상과 백업을 확인한 후 직접 실행합니다.
 .\.venv\Scripts\python.exe -m kiwoom_collector quote-top20-test `
   --collection-id "회차-UUID" --environment mock --db data/stock1.db `
-  --request-spacing 1.1 --recollect never
+  --request-spacing 1.2 --recollect never
 ```
 
 `--request-spacing`으로 간격을 더 늘릴 수 있습니다. `--recollect never`는 기존 시도를 생략하고, `failed`는 성공 이력이 없는 실패·중단 대상을, `all`은 기존 성공까지 새 관측 차수로 수집합니다. 어떤 옵션도 과거 성공 행을 덮어쓰지 않습니다. 결과 불명 `running`과 강제 종료로 남은 잠금은 자동 재전송하지 않습니다.
@@ -997,3 +999,15 @@ Start-Process .\data\sector-radar-20261020-mock.html
 `collect --schedule --with-top20-quotes`는 방금 성공한 동일 회차의 종목만 ka10095로 후속 수집합니다.
 옵션이 없으면 기존처럼 순위만 수집합니다. 운영/테스트 시세 분리, 시간 예산, 공유 잠금 및
 실패·복구 정책과 mock/real 명령 예시는 [SCHEDULED_QUOTES.md](docs/SCHEDULED_QUOTES.md)를 참고하세요.
+
+### 수동 1회 통합 테스트
+
+`quote-integrated-test --environment mock --db <새로운 테스트 DB> --qry-tp 1`은
+순위 1회와 동일 회차의 시세 최대 10회를 조회하고 종료합니다. 정기 스케줄을 실행하지 않습니다.
+새 경로 검증, 요청 예산, 결과 요약과 실행 예시는 [INTEGRATED_TEST.md](docs/INTEGRATED_TEST.md)를 참고하세요.
+
+2026-10-23 승인된 모의서버 재시험에서 OAuth 1회·순위 1회·시세 10회로 20종목의 연결·저장을
+확인했습니다(프로세스 전체 12.640초). 가격 부호·단위 의미는 미검증 상태로 유지합니다.
+실측 후 기본 요청 간격을 1.2초로 늘리고 실제 전송 시작 직전 고해상도 시계로 재확인하도록
+보완했습니다. 이 보완 이후 실제 API는 다시 호출하지 않았습니다. Norton 로컬 CA 번들은
+검증된 테스트 프로세스에만 적용하며 Git·.env·certifi 원본에 포함하거나 덮어쓰지 않습니다.

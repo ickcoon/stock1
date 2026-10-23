@@ -148,7 +148,8 @@ class EndToEndTests(TestCase):
     def test_mock_http_to_real_sqlite_and_cli(self):
         from kiwoom_collector.client import KiwoomClient
         from kiwoom_collector.config import Credentials
-        with tempfile.TemporaryDirectory() as directory, patch('kiwoom_collector.client.requests.Session') as session_factory, patch('kiwoom_collector.client.time.sleep'):
+        from clock_helpers import request_clock
+        with tempfile.TemporaryDirectory() as directory, patch('kiwoom_collector.client.requests.Session') as session_factory, request_clock():
             store = Store(Path(directory) / 'stock1.db')
             client = KiwoomClient(Credentials('test-key', 'test-secret'))
             auth = Mock(status_code=200, headers={})

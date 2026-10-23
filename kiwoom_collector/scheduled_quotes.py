@@ -7,7 +7,7 @@ import math
 from uuid import uuid4
 
 from .api_resource import exclusive_quotes
-from .client import KST
+from .client import KST, DEFAULT_REQUEST_SPACING
 from .quotes import (SPEC_VERSION, VALUE_FIELDS, QuoteDeadlineReached,
                      QuoteInterrupted, normalize_quote, stamp)
 from .top20_quotes import connection, make_plan, migrate_top20, stop_reason
@@ -19,7 +19,7 @@ class QuotePolicy:
     max_duration_seconds: int = 120
     next_slot_reserve_seconds: int = 60
     request_budget_seconds: int = 60
-    spacing_seconds: float = 1.1
+    spacing_seconds: float = DEFAULT_REQUEST_SPACING
 
     def __post_init__(self):
         for value in (self.max_age_seconds, self.max_duration_seconds,
@@ -79,6 +79,23 @@ def migrate_scheduled_quotes(db):
 @exclusive_quotes
 def run_scheduled_quotes(path, client, collection_id, *, environment, created_at,
                          next_scheduled_at, now=lambda: datetime.now(KST), policy=QuotePolicy()):
+    return _run_quotes(path, client, collection_id, environment=environment,
+                       created_at=created_at, next_scheduled_at=next_scheduled_at,
+                       now=now, policy=policy, test_mode=0)
+
+
+@exclusive_quotes
+def run_integrated_quotes(path, client, collection_id, *, created_at,
+                          now=lambda: datetime.now(KST), policy=QuotePolicy()):
+    """Manual test flow; never invent a scheduled_at for a test collection."""
+    return _run_quotes(path, client, collection_id, environment='mock', created_at=created_at,
+                       next_scheduled_at=created_at+timedelta(seconds=policy.max_duration_seconds+policy.next_slot_reserve_seconds),
+                       now=now, policy=policy, test_mode=1)
+
+
+def _run_quotes(path, client, collection_id, *, environment, created_at,
+                next_scheduled_at, now, policy, test_mode):
+    run_table = 'scheduled_quote_runs' if test_mode == 0 else 'integrated_quote_runs'
     if client.credentials.environment != environment:
         raise ValueError('순위/시세 클라이언트 환경 불일치')
     current = now()
@@ -93,24 +110,33 @@ def run_scheduled_quotes(path, client, collection_id, *, environment, created_at
         try:
             db.execute('BEGIN IMMEDIATE')
             parent = db.execute('SELECT * FROM collections WHERE id=?', (collection_id,)).fetchone()
-            if (parent is None or parent['status'] != 'success' or parent['test_mode'] != 0
-                    or not parent['scheduled_at'] or parent['environment'] != environment
+            if (parent is None or parent['status'] != 'success' or parent['test_mode'] != test_mode
+                    or (not parent['scheduled_at'] if test_mode == 0 else parent['scheduled_at'] is not None)
+                    or parent['environment'] != environment
                     or parent['collected_at'] != created_at.astimezone(KST).isoformat(timespec='seconds')):
                 raise ValueError('동일 흐름에서 생성된 신규 운영 순위 회차가 필요합니다.')
-            migrate_scheduled_quotes(db)
-            previous = db.execute('SELECT * FROM scheduled_quote_runs WHERE collection_id=?', (collection_id,)).fetchone()
+            if test_mode == 0:
+                migrate_scheduled_quotes(db)
+            else:
+                migrate_top20(db)
+                db.execute('''CREATE TABLE IF NOT EXISTS integrated_quote_runs (
+                    collection_id TEXT PRIMARY KEY REFERENCES collections(id),
+                    batch_id TEXT NOT NULL UNIQUE REFERENCES quote_batches(id),
+                    status TEXT NOT NULL CHECK(status IN ('running','complete','partial','error','stopped','uncertain')),
+                    reason TEXT, deadline_at TEXT NOT NULL)''')
+            previous = db.execute(f'SELECT * FROM {run_table} WHERE collection_id=?', (collection_id,)).fetchone()
             if previous:
                 db.rollback()
                 return {'status': 'skipped', 'reason': 'already_claimed', 'collection_id': collection_id}
-            plan = make_plan(db, collection_id, environment, policy.spacing_seconds, 'never', test_mode=0)
+            plan = make_plan(db, collection_id, environment, policy.spacing_seconds, 'never', test_mode=test_mode)
             if plan['blocked_by_batch_id']:
                 db.rollback()
                 return {'status': 'stopped', 'reason': 'unresolved_lock', 'collection_id': collection_id}
-            plan['temporal_relation'] = 'same_scheduled_collection_flow'
+            plan['temporal_relation'] = 'same_scheduled_collection_flow' if test_mode == 0 else 'same_integrated_test_flow'
             db.execute('''INSERT INTO quote_batches(id,collection_id,environment,test_mode,api_id,spec_version,started_at,status,plan_json)
-                VALUES(?,?,?,0,'ka10095',?,?,'running',?)''',
-                (batch_id,collection_id,environment,SPEC_VERSION,stamp(),json.dumps(plan,ensure_ascii=False)))
-            db.execute('INSERT INTO scheduled_quote_runs VALUES(?,?,\'running\',NULL,?)',
+                VALUES(?,?,?,?,'ka10095',?,?,'running',?)''',
+                (batch_id,collection_id,environment,test_mode,SPEC_VERSION,stamp(),json.dumps(plan,ensure_ascii=False)))
+            db.execute(f'INSERT INTO {run_table} VALUES(?,?,\'running\',NULL,?)',
                        (collection_id,batch_id,deadline.isoformat()))
             db.execute('INSERT INTO quote_top20_locks VALUES(?,?)', (environment,batch_id))
             db.commit()
@@ -135,7 +161,7 @@ def run_scheduled_quotes(path, client, collection_id, *, environment, created_at
                                (request_id,batch_id,json.dumps(chunk['codes'])))
                     for rank, code in zip(chunk['ranks'],chunk['codes']):
                         db.execute('''INSERT INTO quote_observations(batch_id,collection_id,rank,requested_code,api_id,test_mode,status,attempt,request_id)
-                            VALUES(?,?,?,?,'ka10095',0,'running',0,?)''', (batch_id,collection_id,rank,code,request_id))
+                            VALUES(?,?,?,?,'ka10095',?,'running',0,?)''', (batch_id,collection_id,rank,code,test_mode,request_id))
                 try:
                     quotes = client.fetch_quotes(chunk['codes'])
                     if set(quotes) != set(chunk['codes']):
@@ -194,7 +220,7 @@ def run_scheduled_quotes(path, client, collection_id, *, environment, created_at
                             'error' if states and all(s not in ('success','partial') for s in states) else
                             'partial' if states else 'skipped')
             with db:
-                db.execute('UPDATE scheduled_quote_runs SET status=?,reason=? WHERE collection_id=?', (status,reason,collection_id))
+                db.execute(f'UPDATE {run_table} SET status=?,reason=? WHERE collection_id=?', (status,reason,collection_id))
                 db.execute('UPDATE quote_batches SET status=?,finished_at=? WHERE id=?',
                            (batch_status,stamp(),batch_id))
                 if not uncertain:
