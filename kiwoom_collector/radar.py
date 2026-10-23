@@ -101,17 +101,21 @@ def radar_report(path, day, environment='mock'):
     if environment not in ('mock', 'real'):
         raise ValueError('환경은 mock/real이어야 합니다.')
     with read_database(path) as (db, resolved):
-        runs = [dict(r) for r in _rows(db, "SELECT * FROM collections WHERE environment=? AND api_id='ka00198' AND status='success' ORDER BY collected_at,rowid", (environment,))
+        runs = [dict(r) for r in _rows(db, "SELECT rowid AS sequence,* FROM collections WHERE environment=? AND api_id='ka00198' AND status='success' ORDER BY rowid", (environment,))
                 if timestamp(r['collected_at']) and timestamp(r['collected_at']).date().isoformat() == day]
+        runs.sort(key=lambda r: (timestamp(r['collected_at']), r['sequence']))
         tables = {r['name'] for r in _rows(db, "SELECT name FROM sqlite_master WHERE type='table'")}
         tags = _rows(db, 'SELECT t.stock_code,s.sector_name,t.source FROM stock_sectors t JOIN sectors s ON t.sector_id=s.sector_id ORDER BY s.sector_name')
         for run in runs:
+            run['quote_batches'] = [dict(b) for b in _rows(db,
+                'SELECT * FROM quote_batches WHERE collection_id=? AND environment=? ORDER BY rowid', (run['id'], environment))] if 'quote_batches' in tables else []
             stocks = []
             for row in _rows(db, 'SELECT * FROM ranking_records WHERE collection_id=? ORDER BY rank', (run['id'],)):
                 stock = dict(row)
                 quotes = []
                 if {'quote_batches', 'quote_observations'} <= tables:
-                    quotes = [dict(q) for q in _rows(db, '''SELECT o.*,b.spec_version FROM quote_observations o JOIN quote_batches b
+                    quotes = [dict(q) for q in _rows(db, '''SELECT o.*,b.spec_version,b.test_mode AS batch_test_mode,
+                        b.status AS batch_status,b.started_at AS batch_started_at FROM quote_observations o JOIN quote_batches b
                         ON b.id=o.batch_id AND b.collection_id=o.collection_id
                         WHERE o.collection_id=? AND o.rank=? AND o.requested_code=? AND b.environment=? AND b.api_id=o.api_id''',
                         (run['id'], row['rank'], row['stk_cd'], environment))]
@@ -133,10 +137,13 @@ def radar_report(path, day, environment='mock'):
                 run['sectors'].append(dict(name=name, stocks=members, interest_count=len(members),
                     top5=sum(s['rank'] <= 5 for s in members), top10=sum(s['rank'] <= 10 for s in members),
                     excluded=sum(not s['quote']['eligible'] for s in members), **counts))
-        return dict(date=day, environment=environment, db=str(resolved), runs=runs)
+        from .radar_v2 import overview
+        result = dict(date=day, environment=environment, db=str(resolved), runs=runs)
+        result['overview'] = overview(runs)
+        return result
 
 
-def render_radar(report):
+def render_diagnostics(report):
     def e(value):
         return escape('—' if value is None else str(value), quote=True)
     parts = ['''<!doctype html><html lang="ko"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -163,11 +170,19 @@ body{font-family:system-ui,sans-serif;background:#f3f6fb;color:#18263a;margin:0;
     return ''.join(parts) + '</main></html>'
 
 
+def render_radar(report):
+    from .radar_v2 import render
+    return render(report)
+
+
 def export_radar(path, day, environment, output):
     target = Path(output).resolve()
     source = Path(path).resolve()
     if target == source or (target.exists() and source.exists() and target.samefile(source)) or target.suffix.lower() not in ('.html', '.htm'):
         raise ValueError('DB와 다른 .html 출력 경로를 지정하세요.')
+    if target.exists() or target.is_symlink():
+        raise ValueError('기존 출력 파일은 덮어쓰지 않습니다. 새로운 .html 경로를 지정하세요.')
     report = radar_report(path, day, environment)
-    target.write_text(render_radar(report), encoding='utf-8')
+    with target.open('x', encoding='utf-8') as handle:
+        handle.write(render_radar(report))
     return dict(output=str(target), date=day, environment=environment, collections=len(report['runs']))
