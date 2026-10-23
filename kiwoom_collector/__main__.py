@@ -14,6 +14,7 @@ from .summary import sector_summary
 from .schedule import collect_schedule, load_holidays, SLOTS
 from .timeline import sector_timeline
 from .dashboard import export_dashboard
+from .radar import export_radar
 from .conditions import ConditionClient, fetch_conditions, condition_report
 from .external_tags import external_command, is_external_csv
 from .workbench import export_workbench
@@ -31,7 +32,7 @@ def validate_cli(parser, args):
         'sector add': 1, 'sector tag': 2, 'sector untag': 2, 'sector show': 1,
         'sector list': 0, 'sector untagged': 0, 'sector import': 1,
         'sector export-untagged': 0, 'sector summary': 0, 'sector timeline': 0,
-        'sector dashboard': 0, 'sector export-priority': 0, 'sector provenance': 1,
+        'sector radar': 0, 'sector dashboard': 0, 'sector export-priority': 0, 'sector provenance': 1,
         'sector workbench': 0, 'sector import-report': 1, 'sector alias add': 2, 'sector alias list': 0,
         'condition list': 0, 'condition fetch': 0, 'condition report': 0,
     }
@@ -43,16 +44,16 @@ def validate_cli(parser, args):
         if key not in arities or len(values[prefix:]) != arities[key]:
             parser.error('하위 명령/인자 수를 확인하세요. sector: add/tag/untag/show/list/untagged/import/'
                          'export-untagged/export-priority/provenance/import-report/workbench/alias add/alias list/'
-                         'summary/timeline/dashboard; condition: list/fetch/report')
+                         'summary/timeline/dashboard/radar; condition: list/fetch/report')
     elif values:
         parser.error('추가 위치 인자는 sector/condition 하위 명령에서만 사용합니다.')
     policy = {
-        'environment': {'sector timeline', 'sector dashboard', 'sector export-priority',
+        'environment': {'sector radar', 'sector timeline', 'sector dashboard', 'sector export-priority',
                         'sector import', 'sector workbench', 'condition report', 'quote-test', 'quote-batch-test', 'quote-top20-test'},
         'collection_id': {'quote-test', 'quote-batch-test', 'quote-top20-test'}, 'limit': {'quote-test', 'quote-batch-test'},
         'request_spacing': {'quote-top20-test'}, 'recollect': {'quote-top20-test'},
-        'output': {'sector export-untagged', 'sector export-priority', 'sector dashboard', 'sector workbench', 'sector import-report'},
-        'date': {'sector timeline', 'sector dashboard'},
+        'output': {'sector radar', 'sector export-untagged', 'sector export-priority', 'sector dashboard', 'sector workbench', 'sector import-report'},
+        'date': {'sector radar', 'sector timeline', 'sector dashboard'},
         'source': {'sector tag', 'sector untag', 'sector import', 'sector alias add'},
         'dry_run': {'sector import', 'quote-top20-test'},
         'observed_at': {'sector import'}, 'terms_url': {'sector import'},
@@ -64,7 +65,7 @@ def validate_cli(parser, args):
         value = getattr(args, field)
         if value is not None and value is not False and key not in allowed:
             parser.error('--' + field.replace('_', '-') + ' 지원 명령: ' + ', '.join(sorted(allowed)))
-    if key in {'sector export-untagged', 'sector export-priority', 'sector dashboard', 'sector workbench'} and args.output is None:
+    if key in {'sector radar', 'sector export-untagged', 'sector export-priority', 'sector dashboard', 'sector workbench'} and args.output is None:
         parser.error(key + '에는 --output이 필요합니다.')
     if args.holidays is not None and not args.schedule:
         parser.error('--holidays는 collect --schedule과 함께 사용하세요.')
@@ -89,7 +90,7 @@ def main(argv=None) -> int:
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="sector: add, tag, untag, show, list, untagged, import, export-untagged,\n"
                "        export-priority, workbench, provenance, import-report,\n"
-               "        alias add, alias list, summary, timeline, dashboard\n"
+               "        alias add, alias list, summary, timeline, dashboard, radar\n"
                "condition: list, fetch, report")
     parser.add_argument("command", choices=("check-config", "auth", "once", "collect", "status", "latest", "sector", "condition", "quote-test", "quote-batch-test", "quote-top20-test"), nargs="?", default="check-config")
     parser.add_argument('--request-spacing', type=float, default=None, help='quote-top20-test: 요청 시작 간격(초), 기본/최소 1.1')
@@ -106,7 +107,7 @@ def main(argv=None) -> int:
     parser.add_argument("--output", type=Path, help="sector export-untagged/export-priority/workbench/dashboard/import-report: 새 CSV/HTML/JSON 경로")
     parser.add_argument('--schedule', action='store_true', help='collect: KST 하루 10회 고정 시간표')
     parser.add_argument('--holidays', type=Path, help='고정 일정용 KRX 휴장일 목록 파일')
-    parser.add_argument('--date', help='sector timeline/dashboard: YYYY-MM-DD, 기본 KST 오늘')
+    parser.add_argument('--date', help='sector timeline/dashboard/radar: YYYY-MM-DD, 기본 KST 오늘')
     parser.add_argument('--environment', choices=('mock', 'real'), default=None, help='분석 환경 또는 quote-test 요청 환경, 기본 mock; API 서버는 KIWOOM_ENV와 일치해야 함')
     parser.add_argument('--observed-at', help='외부 테마 확인일 YYYY-MM-DD')
     parser.add_argument('--terms-url', help='사용자가 확인한 출처 이용조건 URL (접속 안 함)')
@@ -150,6 +151,10 @@ def main(argv=None) -> int:
                                       api_id='ka10095' if batch else 'ka10007')
             print(json.dumps(report, ensure_ascii=False, indent=2))
             return code
+        if command_key == 'sector radar':
+            print(json.dumps(export_radar(args.db, args.date or datetime.now(KST).date().isoformat(),
+                                          args.environment or 'mock', args.output), ensure_ascii=False, indent=2))
+            return 0
         if command_key == 'sector workbench':
             print(json.dumps(export_workbench(args.db, args.environment or 'mock', args.output), ensure_ascii=False, indent=2))
             return 0

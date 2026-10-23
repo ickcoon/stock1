@@ -179,6 +179,17 @@ socket.socket.connect_ex = forbidden
         self.cli('sector','workbench',expected=2)
         self.cli('sector','workbench','--output',self.folder/'other.html','--source','x',expected=2)
 
+    def test_radar_real_entrypoint_is_offline_and_readonly(self):
+        before = self.db.read_bytes()
+        output = self.folder/'radar.html'
+        result = json.loads(self.cli('sector','radar','--date','2026-10-19',
+                                     '--environment','mock','--output',output).stdout)
+        self.assertEqual(result['collections'],1)
+        self.assertIn('시세 미수집',output.read_text(encoding='utf-8'))
+        self.assertEqual(before,self.db.read_bytes())
+        self.cli('sector','radar',expected=2)
+        self.cli('sector','radar','--output',output,'--source','x',expected=2)
+
     def test_help_documents_new_metadata_options(self):
         result = self.run_cli('--help')
         for option in ('--observed-at','--terms-url','--terms-note','--terms-checked-at','export-priority','import-report'):

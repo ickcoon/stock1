@@ -980,3 +980,14 @@ $LASTEXITCODE
 미확인 자료는 HTML에서 DB에 적용할 수 없으며, CSV를 수동 편집해 필수 메타데이터를 없애도 기존 importer가 다시 검증해 거부합니다. HTML 생성 후 DB가 바뀔 수 있으므로 반드시 현재 DB에 대한 dry-run을 검토해야 합니다. 이용조건 확인 체크는 사용자 진술이며 외부 서비스의 허가나 분류의 정확성을 자동 검증했다는 뜻이 아닙니다.
 
 테스트에는 읽기 전용 DB 보존, 우선순위 일치, 최근 7일 범위, 환경 분리, 조건검색 테이블 없는 DB, 안전한 HTML 문자열 처리, 실제 `python -m` 진입점과 브라우저의 편집→CSV→기존 importer 왕복을 포함합니다. 브라우저 검사는 Chromium/Edge/Chrome이 설치되어 있으면 headless로 실행하고 없으면 해당 검사만 skipped로 표시합니다. 클라우드 관리 브라우저의 로컬 파일 탐색 제한 때문에 동일 HTML을 메모리에 렌더링하여 검사하며 애플리케이션 서버를 띄우지 않습니다. 실제 Windows 파일 열기는 위 `Start-Process` 절차로 확인하세요.
+
+### 주도섹터 레이더 v1 (읽기 전용)
+
+조회순위상 인기와 시점이 일치하는 시세 상승 후보를 구분하는 독립 HTML 보고서입니다. 기존 시간별 대시보드·미분류 작업실과 별도로 실행합니다.
+
+```powershell
+python -m kiwoom_collector sector radar --date 2026-10-20 --environment mock --db .\data\stock1.db --output .\data\sector-radar-20261020-mock.html
+Start-Process .\data\sector-radar-20261020-mock.html
+```
+
+시점 비교, 단위·누락값 처리, 실제 스키마 확인 결과는 [SECTOR_RADAR.md](docs/SECTOR_RADAR.md)를 참고하세요.
