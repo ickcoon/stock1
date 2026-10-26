@@ -1,5 +1,7 @@
 # Sector Radar v3 — 읽기 전용 장중 관심 변화
 
+[공통 분석 정책](RADAR_ANALYSIS_POLICY.md)에 따라 TOP20은 섹터 탐지, TOP5는 매매 후보 검토의 우선 필터로 사용한다. TOP5 반복과 검증된 섹터 동반 상승·거래대금을 각각 확인하며 순위만으로 후보를 확정하지 않는다. 기존 진입/유지/이탈은 TOP20 집합 기준이며 TOP5 전용 상태 표시·후보 확정 기능을 새로 구현하지 않는다.
+
 v2와 수집 엔진을 그대로 두고 `kiwoom_collector.radar_v3` 모듈로 실행한다. 기본 대상은 동일 KST 날짜·환경·`qry_tp=1`·`test_mode=0` 성공 회차다. 운영 DB를 `mode=ro + query_only + 읽기 트랜잭션`으로 열고 SQLite Backup API로 WAL을 포함한 임시 스냅샷을 만든다. v2의 회차 로더·중복 제거·시세 검증·진단을 그 스냅샷에 재사용한다. 임시 DB 연결은 닫은 뒤 제거한다. Store·마이그레이션·API·인증을 실행하지 않는다.
 
 ```powershell

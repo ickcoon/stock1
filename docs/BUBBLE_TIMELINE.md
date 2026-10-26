@@ -1,5 +1,7 @@
 # Bubble Radar 장중 타임라인
 
+[공통 분석 정책](RADAR_ANALYSIS_POLICY.md)에 따라 TOP20 군집·지속성으로 섹터를 탐지하고 종목 TOP5 출현은 매매 후보 검토 근거로 구분한다. 선택 시점까지의 성공 관측만 사용하며 기존 TOP20 진입/유지/이탈을 TOP5 전용 상태로 바꾸지 않는다. 거래대금 미검증 시 후보 확정을 보류하며 이번 정책 보완은 타임라인 코드를 변경하지 않는다.
+
 기준 0686a58의 v2·v3·Bubble v1을 수정하지 않고 `kiwoom_collector.bubble_timeline`에 시간 선택 출력을 추가했다.
 
 ```powershell
