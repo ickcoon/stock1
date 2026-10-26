@@ -1,0 +1,21 @@
+{
+  "description": "Synthetic offline fixture based on the official ka10032 contract; not a market response or empirical verification.",
+  "api_id": "ka10032",
+  "environment": "mock",
+  "request": {"mrkt_tp": "000", "mang_stk_incls": "0", "stex_tp": "1"},
+  "pages": [
+    {
+      "request_started_at": "2026-10-26T10:00:00+09:00",
+      "request_finished_at": "2026-10-26T10:00:01+09:00",
+      "http_status": 200,
+      "headers": {"cont-yn": "N"},
+      "body": {
+        "return_code": 0,
+        "trde_prica_upper": [
+          {"stk_cd": "005930", "stk_nm": "삼성전자", "now_rank": "1", "pred_rank": "2", "cur_prc": "+070000", "pred_pre_sig": "2", "pred_pre": "+1000", "flu_rt": "+1.45", "sel_bid": "+70100", "buy_bid": "+70000", "now_trde_qty": "10000", "pred_trde_qty": "20000", "trde_prica": "1234.56"},
+          {"stk_cd": "000660", "stk_nm": "SK하이닉스", "now_rank": "2", "pred_rank": "1", "cur_prc": "-180000", "pred_pre_sig": "5", "pred_pre": "-1000", "flu_rt": "-0.55", "sel_bid": "-180100", "buy_bid": "-180000", "now_trde_qty": "5000", "pred_trde_qty": "7000", "trde_prica": "900"}
+        ]
+      }
+    }
+  ]
+}
