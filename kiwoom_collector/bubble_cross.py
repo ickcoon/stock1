@@ -11,7 +11,7 @@ from .radar import assess
 from .radar_v2 import e, summarize
 
 
-def build(document):
+def build(document,*,capital_records=None,capital_proofs=None):
     """Preserve Bubble geometry/interest and isolate financial data to its pair."""
     a,b=document['ranking'],document['turnover']
     if a['environment']!=b['environment']:raise ValueError('Mixed environments forbidden')
@@ -29,6 +29,9 @@ def build(document):
     legacy=dict(date=adapter.timestamp(a['collected_at']).date().isoformat(),environment=a['environment'],db='saved Step 5-E JSON',runs=runs)
     data=layout.optimize(timeline.build(legacy,runs))
     comparisons={n:adapter.analyze_pair(document,min_turnover_eok=n) for n in (500,1000)}
+    if capital_records is not None:
+        from .capital_filter import integrate
+        comparisons={n:integrate(r,capital_records,proofs=capital_proofs) for n,r in comparisons.items()}
     return dict(timeline=data,comparisons=comparisons,source=deepcopy(document))
 
 
@@ -55,6 +58,16 @@ def card(stock,row,active):
     rank=row.get('turnover_rank') if available else None
     repeat=stock.get('top5_count',row.get('top5_appearances'))
     status='검증 보류' if available else '이 회차의 교차 자료 없음' if not active else '코드·자료 검토 보류'
+    qualification=row.get('qualification',{}) if active else {}
+    checks=qualification.get('checks',{})
+    label=lambda value:'확인(근거 검증)' if value is True else '미달(근거 검증)' if value is False else '미확인'
+    cap_label=label(checks.get('market_cap_3000_eok'))
+    closing_label=label(checks.get('closing_turnover_1000_eok'))
+    capital=row.get('capital_reference') if active else None
+    capital_note=('시총 별도 조회 '+str(capital.get('retrieved_at'))+' · 선택 회차 적용 미검증') if capital else ''
+    band_labels=dict(primary_exploration='핵심 탐색 3,000억원~5조원',extended_exploration='확장 탐색 5조 초과~10조원',mega_cap_leader='초대형 주도주 10조원 초과',below_floor='하한 미만',unknown='미확인')
+    if active and row.get('capital_band'):
+        capital_note+=' · 시총 구간: '+band_labels[row['capital_band']['band']]+' (잠정 전략 가설 · 상한 제외 없음)'
     return (f'<article class="stock-card" data-code="{e(stock["code"])}" data-confirmed="false">'
         f'<header><b>{e(stock["name"] or stock["code"])}</b><code>{e(stock["code"])}</code></header>'
         f'<div class="stock-metrics"><span>0198 관심순위<b>{e(stock["rank"])}위</b></span>'
@@ -62,8 +75,9 @@ def card(stock,row,active):
         f'<span>0186 거래대금순위<b>{e(rank) if rank else "미확인"}{"위" if rank else ""}</b></span>'
         f'<span>장중 거래대금 · 명세 환산<b>{e(amount)}</b></span>'
         f'<span>등락률 · 원문 잠정<b>{e(rate)+"%" if rate is not None else "미확인"}</b></span>'
-        '<span>시총 3,000억원 이상<b>미확인</b></span></div>'
-        '<p class="condition">장 마감 누적 1,000억원 이상: <b>미확인</b> · 장중 관측으로 판정하지 않음</p>'
+        f'<span>시총 3,000억원 이상<b>{e(cap_label)}</b></span></div>'
+        f'<p class="condition">장 마감 누적 1,000억원 이상: <b>{e(closing_label)}</b> · 장중 관측으로 판정하지 않음</p>'
+        + (f'<small class="condition">{e(capital_note)}</small>' if capital_note else '')+
         f'<small class="stock-status">{e(status)} · 후보 확정 아님</small></article>')
 
 
@@ -143,9 +157,18 @@ def main(argv=None):
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('--input-json',type=Path,required=True)
     p.add_argument('--output',type=Path,required=True)
+    p.add_argument('--capital-json',type=Path)
     args=p.parse_args(argv)
     if args.input_json.suffix.lower()!='.json':p.error('Saved JSON input required')
-    export(json.loads(args.input_json.read_text(encoding='utf-8-sig')),args.output)
+    document=json.loads(args.input_json.read_text(encoding='utf-8-sig'))
+    if args.capital_json:
+        if args.capital_json.suffix.lower()!='.json':p.error('Saved capital JSON required')
+        records=json.loads(args.capital_json.read_text(encoding='utf-8-sig'))
+        records=records if isinstance(records,list) else [records]
+        if args.output.exists() or args.output.suffix.lower()!='.html':p.error('New HTML output required')
+        html=render(build(document,capital_records=records))
+        with args.output.open('x',encoding='utf8') as f:f.write(html)
+    else:export(document,args.output)
     return 0
 
 

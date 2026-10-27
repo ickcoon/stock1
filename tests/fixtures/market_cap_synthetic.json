@@ -1,0 +1,25 @@
+{
+  "description": "Synthetic values in the official ka10001 object shape; NOT a captured market response or independent unit verification.",
+  "api_id": "ka10001",
+  "environment": "mock",
+  "records": [
+    {
+      "requested_code": "005930",
+      "request_started_at": "2026-10-27T15:04:00+09:00",
+      "response_received_at": "2026-10-27T15:04:01+09:00",
+      "http_status": 200,
+      "security_type": "common_stock",
+      "security_type_evidence": "SYNTHETIC classification for boundary test only",
+      "body": {"return_code": 0, "stk_cd": "005930", "stk_nm": "합성 일반 주식", "mac": "3000", "flo_stk": "10000", "cur_prc": "+030000"}
+    },
+    {
+      "requested_code": "069500",
+      "request_started_at": "2026-10-27T15:04:02+09:00",
+      "response_received_at": "2026-10-27T15:04:03+09:00",
+      "http_status": 200,
+      "security_type": "ETF",
+      "security_type_evidence": "SYNTHETIC ETF classification for exclusion test only",
+      "body": {"return_code": 0, "stk_cd": "069500", "stk_nm": "합성 ETF", "mac": "99999", "flo_stk": "100", "cur_prc": "-10000"}
+    }
+  ]
+}
