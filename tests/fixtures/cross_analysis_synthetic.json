@@ -1,0 +1,36 @@
+{
+  "description": "Synthetic fixture only; no actual market verification.",
+  "ranking": {
+    "id": "ranking-now", "api_id": "ka00198", "environment": "mock", "test_mode": true,
+    "market": {"mrkt_tp": "000", "mang_stk_incls": "0", "stex_tp": "1"},
+    "qry_tp": "1", "status": "success", "collected_at": "2026-10-27T14:00:00+09:00",
+    "rows": [
+      {"stk_cd": "005930", "stk_nm": "삼성전자(합성)", "rank": 1},
+      {"stk_cd": "000660", "stk_nm": "SK하이닉스(합성)", "rank": 6},
+      {"stk_cd": "069500", "stk_nm": "ETF(합성)", "rank": 7},
+      {"stk_cd": "000001", "stk_nm": "미분류(합성)", "rank": 8}
+    ]
+  },
+  "turnover": {
+    "id": "turnover-now", "api_id": "ka10032", "environment": "mock", "test_mode": true,
+    "market": {"mrkt_tp": "000", "mang_stk_incls": "0", "stex_tp": "1"},
+    "status": "success", "collected_at": "2026-10-27T14:00:02+09:00",
+    "rows": [
+      {"stk_cd": "005930", "stk_nm": "삼성전자(합성)", "now_rank": "1", "trde_prica": "1234.56", "cur_prc": "+070000", "flu_rt": "+1.45", "now_trde_qty": "10000"},
+      {"stk_cd": "000660", "stk_nm": "SK하이닉스(합성)", "now_rank": "2", "trde_prica": "900", "cur_prc": "-180000", "flu_rt": "-0.55", "now_trde_qty": "5000"},
+      {"stk_cd": "069500", "stk_nm": "ETF(합성)", "now_rank": "3", "trde_prica": "20", "cur_prc": "10000", "flu_rt": "+0.2", "now_trde_qty": "2000"}
+    ]
+  },
+  "history": [
+    {"id": "ranking-prior", "environment": "mock", "test_mode": true,
+     "market": {"mrkt_tp": "000", "mang_stk_incls": "0", "stex_tp": "1"},
+     "qry_tp": "1", "status": "success", "collected_at": "2026-10-27T13:00:00+09:00",
+     "rows": [{"stk_cd": "005930", "stk_nm": "삼성전자(합성)", "rank": 2}, {"stk_cd": "000660", "stk_nm": "SK하이닉스(합성)", "rank": 3}]}
+  ],
+  "securities": {
+    "005930": {"sectors": ["반도체"], "security_type": "common_stock"},
+    "000660": {"sectors": ["반도체"], "security_type": "common_stock"},
+    "069500": {"sectors": ["지수"], "security_type": "ETF"}
+  },
+  "verification": {}
+}

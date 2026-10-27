@@ -1,0 +1,8 @@
+{
+  "0167A0": {"verified": true, "security_type": "ETF", "name": "SOL AI반도체TOP2플러스", "source": "https://www.soletf.com/ko/cs/noticeView?no=83", "checked_date": "2026-10-27"},
+  "0193T0": {"verified": true, "security_type": "ETF", "name": "KODEX SK하이닉스단일종목레버리지", "source": "https://www.samsungfund.com/etf/theme-view.do?bgColor=%23FBB938&seq=60116&themeCd=leverage", "checked_date": "2026-10-27"},
+  "0197X0": {"verified": true, "security_type": "ETF", "name": "SOL SK하이닉스선물단일종목인버스2X", "source": "https://www.soletf.com/ko/cs/noticeView?no=94", "checked_date": "2026-10-27"},
+  "0193W0": {"verified": true, "security_type": "ETF", "name": "KODEX 삼성전자단일종목레버리지", "source": "https://www.samsungfund.com/etf/theme-view.do?bgColor=%23FBB938&seq=60116&themeCd=leverage", "checked_date": "2026-10-27"},
+  "0162Z0": {"verified": true, "security_type": "ETF", "name": "RISE 삼성전자SK하이닉스채권혼합50", "source": "https://riseetf.co.kr/prod/finderDetail/44K1", "checked_date": "2026-10-27"},
+  "0219E0": {"verified": true, "security_type": "ETF", "name": "KODEX 200커버드콜액티브", "source": "https://m.samsungfund.com/etf/product/view.do?id=2ETFV8", "checked_date": "2026-10-27"}
+}
