@@ -1,0 +1,13 @@
+{
+  "source_kind": "synthetic_official_shape_not_live_response",
+  "spec_urls": [
+    "https://openapi.kiwoom.com/m/guide/apiguide/07/ka10081",
+    "https://openapi.kiwoom.com/m/guide/apiguide/07/ka11081"
+  ],
+  "request": {"stk_cd": "005930", "base_dt": "20261028", "upd_stkpc_tp": "0"},
+  "rows": [
+    {"dt": "20261028", "open_pric": "+101", "high_pric": "+110", "low_pric": "-96", "cur_prc": "+106", "trde_qty": "1200", "trde_prica": "0.125", "pred_pre": "+8", "pred_pre_sig": "2", "trde_tern_rt": "+0.12", "upd_stkpc_tp": "", "upd_rt": ""},
+    {"dt": "20261026", "open_pric": "-99", "high_pric": "-101", "low_pric": "-96", "cur_prc": "-98", "trde_qty": "600", "trde_prica": "0.059", "pred_pre": "-2", "pred_pre_sig": "5", "trde_tern_rt": "+0.06", "upd_stkpc_tp": "", "upd_rt": ""},
+    {"dt": "20261023", "open_pric": "98", "high_pric": "105", "low_pric": "95", "cur_prc": "100", "trde_qty": "1000", "trde_prica": "0.100", "pred_pre": "+2", "pred_pre_sig": "2", "trde_tern_rt": "+0.10", "upd_stkpc_tp": "", "upd_rt": "", "extra_raw_field": "retained"}
+  ]
+}

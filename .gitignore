@@ -20,3 +20,18 @@ logs/
 data.zip
 *.html
 *.csv
+
+# Local virtualenv backup, certificates and authentication caches.
+.venv-hospital-backup/
+*.pem
+*.pfx
+*.key
+*.crt
+*.cer
+*.p12
+*.token
+token.json
+tokens.json
+token_cache.json
+*_token.json
+credentials.json
