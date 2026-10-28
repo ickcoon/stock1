@@ -268,10 +268,18 @@ class DiagnosticTransportTests(unittest.TestCase):
         self.assertEqual(report['results'][1]['status'],'not_attempted')
         self.assertEqual(self.session.post.call_count,1)
         self.assertEqual(path.name,'report.json')
-        self.assertNotIn(TOKEN,path.read_text())
+        self.assertNotIn(TOKEN,path.read_text(encoding='utf-8'))
         self.assertFalse(list(folder.glob('*.db')))
         self.assertEqual(report['data_origin'],'mock_server_unverified_source')
         with self.assertRaises(FileExistsError): probe.save_report(folder,report)
+
+    def test_fail_fast_report_roundtrip_with_cp949_default(self):
+        # Simulate Windows' legacy text-file default at pathlib's encoding boundary.
+        # Re-run the actual failure/report/redaction workflow, not a separate reader.
+        def legacy_encoding(encoding, stacklevel=2):
+            return 'cp949' if encoding is None or encoding == 'locale' else encoding
+        with patch('io.text_encoding', side_effect=legacy_encoding):
+            self.test_fail_fast_marks_second_stock_not_attempted_and_separate_json_not_sqlite()
 
     def test_two_stocks_one_page_each_and_environment_real_not_synthetic(self):
         plans=(req(environment='real'),req('000660',environment='real'))
