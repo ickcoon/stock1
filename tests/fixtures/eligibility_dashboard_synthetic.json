@@ -1,0 +1,19 @@
+{
+  "description": "Synthetic only. Evidence flags are test assertions, never actual market verification.",
+  "at": "2026-10-27T15:30:00+09:00",
+  "cases": [
+    {"name": "below_floor", "mac": "2999", "band": "below_floor", "status": "기준 미달"},
+    {"name": "floor", "mac": "3000", "band": "primary_exploration", "status": "검토 가능"},
+    {"name": "five_trillion", "mac": "50000", "band": "primary_exploration", "status": "검토 가능"},
+    {"name": "ten_trillion", "mac": "100000", "band": "extended_exploration", "status": "검토 가능"},
+    {"name": "mega", "mac": "100001", "band": "mega_cap_leader", "status": "검토 가능"},
+    {"name": "missing_cap", "mac": null, "status": "검증 보류"},
+    {"name": "intraday", "mac": "3000", "turnover": "99999", "basis": "intraday_provisional", "status": "검증 보류"},
+    {"name": "closing", "mac": "3000", "turnover": "100000", "status": "검토 가능"},
+    {"name": "wrong_code", "mac": "3000", "wrong_code": true, "status": "검증 보류"},
+    {"name": "mixed", "mac": "3000", "mixed": true},
+    {"name": "future", "mac": "3000", "future": true, "status": "검증 보류"},
+    {"name": "etf", "mac": "3000", "kind": "ETF", "status": "검증 보류"},
+    {"name": "etn", "mac": "3000", "kind": "ETN", "status": "검증 보류"}
+  ]
+}
