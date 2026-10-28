@@ -16,6 +16,8 @@ from urllib.request import build_opener, ProxyHandler
 from websocket import create_connection, WebSocketException
 import unittest
 
+from browser_startup_helpers import wait_for_devtools_port
+
 from kiwoom_collector.client import KST, Snapshot
 from kiwoom_collector.conditions import migrate_conditions
 from kiwoom_collector.external_tags import export_priority, import_external, add_alias
@@ -47,12 +49,7 @@ def browser_dom(target, profile):
     socket = None
     try:
         deadline = time.monotonic()+15
-        port_file = profile/'DevToolsActivePort'
-        while not port_file.exists():
-            if time.monotonic()>deadline or process.poll() is not None:
-                raise AssertionError('Headless browser failed to start')
-            time.sleep(.05)
-        port = port_file.read_text().splitlines()[0]
+        port = wait_for_devtools_port(profile, process, deadline)
         opener = build_opener(ProxyHandler({}))
         with opener.open('http://127.0.0.1:'+port+'/json/list',timeout=5) as response:
             targets = json.load(response)

@@ -194,17 +194,26 @@ class Top20Tests(fixtures.QuoteFixture):
             self.assertEqual(before,{p.name:p.read_bytes() for p in self.path.parent.iterdir()})
 
     def test_dry_snapshot_change_is_rejected(self):
+        # Deterministically exercise a path spelling that resolve() canonicalizes.
+        alias=self.path.parent/'path-alias'
+        alias.mkdir()
+        self.path=alias/'..'/self.path.name
+        target=self.path.resolve()
+        self.assertNotEqual(self.path,target)
         original=Path.read_bytes
+        original_bytes=original(target)
         count=[0]
         def read(path):
             data=original(path)
-            if path==self.path:
+            if path==target:
                 count[0]+=1
                 if count[0]==2:
                     return data+b'changed'
             return data
         with patch.object(Path,'read_bytes',read),self.assertRaises(ValueError):
             dry_run(self.path,self.identifier)
+        self.assertEqual(count[0],2)
+        self.assertEqual(original(target),original_bytes)
         self.session.post.assert_not_called()
 
     def test_legacy_schema_upgrade_and_transaction_rollback(self):

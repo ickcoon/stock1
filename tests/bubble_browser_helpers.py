@@ -7,6 +7,7 @@ import time
 from urllib.request import build_opener, ProxyHandler
 from websocket import create_connection, WebSocketException
 from test_workbench import browser_path
+from browser_startup_helpers import wait_for_devtools_port
 
 
 @contextmanager
@@ -21,11 +22,7 @@ def browser_page(html, folder, width=1360, height=900):
     socket=None
     try:
         limit=time.monotonic()+20
-        while not (profile/'DevToolsActivePort').exists():
-            if process.poll() is not None or time.monotonic()>limit:
-                raise AssertionError('Headless browser startup failed')
-            time.sleep(.05)
-        port=(profile/'DevToolsActivePort').read_text().splitlines()[0]
+        port=wait_for_devtools_port(profile,process,limit)
         with build_opener(ProxyHandler({})).open('http://127.0.0.1:'+port+'/json/list',timeout=5) as response:
             target=next(t for t in json.load(response) if t['type']=='page')
         socket=create_connection(target['webSocketDebuggerUrl'],timeout=15,http_no_proxy=['127.0.0.1','localhost'])
