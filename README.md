@@ -1022,3 +1022,14 @@ OAuth 포함 최대 4요청이며 기존 인증·1.2초 기본 간격 제어를 
 가격 절댓값은 진단용으로만 표시하고 부호·거래대금 단위는 미검증 상태를 유지합니다.
 실제 실행에는 별도 승인이 필요합니다. 이번 검증은 가상 HTTP·임시 DB만 사용합니다.
 실행 절차·보존 필드·실패 정책은 [QUOTE_FIELDS.md](docs/QUOTE_FIELDS.md)를 참고하세요.
+
+## Step 7-B2-A: 독립 일봉 실측 준비
+
+[일봉 진단 CLI 문서](docs/DAILY_CHART_DIAGNOSTICS.md)를 참조하세요. 기존 운영 DB·수집기·스케줄러에는 연결하지 않습니다. 기본 실행은 인증정보 없이 요청 계획만 출력하며 키움 API를 호출하지 않습니다.
+
+```powershell
+python -m kiwoom_collector.daily_diagnostic
+python -m unittest discover -s tests -p test_daily_diagnostic.py -v
+```
+
+실제 전송은 `--real`과 과거 `--base-date`를 명시한 경우만 가능하며, 이 플래그는 실전 서버 선택이 아닙니다. 서버는 `--environment mock/real`과 기존 `.env`의 `KIWOOM_ENV`가 일치해야 합니다. OAuth 발급도 별도 `--authenticate`가 있어야 최대 한 번 허용합니다. 종목별 일봉은 한 번, 최대 두 종목이며 자동 재시도·연속조회·토큰 갱신·다른 API 전환은 없습니다. 원본 인증정보를 제외한 결과는 Git 제외 경로 `diagnostics/daily_chart/`에만 보존합니다. 가격 단위·마감 확정·D0 호환성은 별도 실측 증거가 없으면 미검증이며 추적 관측을 생성하지 않습니다.
