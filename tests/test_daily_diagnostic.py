@@ -185,6 +185,60 @@ class DiagnosticTransportTests(unittest.TestCase):
         with self.assertRaises(ValueError): self.client(real=False)
         self.session.post.assert_not_called()
 
+    def test_explicit_ca_and_no_environment_proxy_on_diagnostic_session(self):
+        client=self.client(ca_bundle=requests.certs.where())
+        self.assertIs(self.session.trust_env,False)
+        self.assertEqual(self.session.verify,str(Path(requests.certs.where()).resolve()))
+        self.assertEqual(self.session.mount.call_args.args[0],'https://')
+        self.assertEqual(self.session.mount.call_args.args[1].max_retries.total,0)
+        self.assertEqual(client.tls_diagnostic['ca_source'],'explicit_reviewed_bundle')
+        self.assertTrue(client.tls_diagnostic['hostname_verification'])
+        self.session.post.assert_not_called()
+
+    def test_default_tls_keeps_certificate_checks_and_ignores_environment(self):
+        with patch.dict(os.environ,{'REQUESTS_CA_BUNDLE':'unreviewed.pem','HTTPS_PROXY':'http://invalid'}):
+            client=self.client()
+        self.assertIs(self.session.trust_env,False)
+        self.assertIs(self.session.verify,True)
+        self.assertEqual(client.tls_diagnostic['ca_source'],'default_certifi')
+        self.session.post.assert_not_called()
+
+    def test_missing_ca_fails_before_session_and_auth(self):
+        with self.assertRaisesRegex(ValueError,'no default fallback'):
+            self.client(ca_bundle=Path(self.temp.name)/'missing.pem')
+        self.session.post.assert_not_called()
+
+    def test_invalid_ca_fails_without_default_fallback(self):
+        ca=Path(self.temp.name)/'invalid.pem';ca.write_text('not a certificate',encoding='utf-8')
+        with self.assertRaisesRegex(ValueError,'no default fallback'):
+            self.client(ca_bundle=ca)
+        self.session.post.assert_not_called()
+
+    def test_unreadable_ca_fails_without_request(self):
+        with patch('pathlib.Path.read_bytes',side_effect=PermissionError('private path omitted')):
+            with self.assertRaisesRegex(ValueError,'no default fallback'):
+                self.client(ca_bundle=requests.certs.where())
+        self.session.post.assert_not_called()
+
+    def test_oauth_transport_exception_type_retained_without_message(self):
+        self.session.post.side_effect=requests.exceptions.SSLError(TOKEN)
+        client=self.client(allow_auth=True)
+        self.assertFalse(client.prepare_auth())
+        self.assertEqual(client.auth_diagnostic['exception_type'],'SSLError')
+        self.assertEqual(client.counts,{'oauth':1,'daily':0})
+        self.assertNotIn(TOKEN,json.dumps(client.auth_diagnostic))
+
+    def test_cli_explicit_ca_reaches_only_diagnostic_session(self):
+        self.session.post.return_value=response(payload(req(base_dt='20261027'),rows=FIXTURE['rows'][1:]))
+        with patch.object(probe,'load_credentials',return_value=Credentials(APP,SECRET)),patch.dict(os.environ,{'KIWOOM_ACCESS_TOKEN':TOKEN}),patch('sys.stdout',new_callable=io.StringIO) as out:
+            self.assertEqual(probe.main(['--real','--base-date','20261027','--stock-code','005930',
+                '--ca-bundle',requests.certs.where(),'--output-dir',self.temp.name]),0)
+        report=json.loads(out.getvalue())
+        self.assertEqual(report['tls']['ca_source'],'explicit_reviewed_bundle')
+        self.assertEqual(report['request_counts'],{'oauth':0,'daily':1})
+        self.assertIs(self.session.trust_env,False)
+        self.assertNotIn(TOKEN,out.getvalue())
+
     def test_default_auth_is_blocked_no_oauth_request(self):
         client=self.client()
         self.assertFalse(client.prepare_auth())

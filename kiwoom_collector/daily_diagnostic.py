@@ -6,14 +6,17 @@ Default CLI is a credential-free request plan. --real enables actual HTTP to
 """
 from datetime import datetime, timedelta
 import argparse
+import hashlib
 import json
 import math
 import os
 from pathlib import Path
 import re
+import ssl
 from uuid import uuid4
 
 import requests
+from requests.adapters import HTTPAdapter
 
 from .client import KiwoomClient, KST
 from .config import PROJECT_ROOT, load_credentials
@@ -189,7 +192,8 @@ class _OneShotSession:
 
 
 class DailyDiagnosticClient(KiwoomClient):
-    def __init__(self, credentials, plans, *, real=False, allow_auth=False, access_token=None, clock=now):
+    def __init__(self, credentials, plans, *, real=False, allow_auth=False, access_token=None, clock=now,
+                 ca_bundle=None):
         if real is not True:
             raise ValueError('Explicit --real required to construct the HTTP probe.')
         plans = tuple(plans)
@@ -201,7 +205,25 @@ class DailyDiagnosticClient(KiwoomClient):
             raise ValueError('Unapproved API host.')
         if any(daily.day(r.base_dt) >= clock().astimezone(KST).date() for r in plans):
             raise ValueError('Live probes require explicit historical base dates.')
+        ca_path = None
+        self.tls_diagnostic = {'trust_env':False, 'certificate_verification':True,
+                               'hostname_verification':True, 'ca_source':'default_certifi'}
+        if ca_bundle is not None:
+            try:
+                ca_path = Path(ca_bundle).resolve(strict=True)
+                ca_bytes = ca_path.read_bytes()
+                context = ssl.create_default_context(cafile=str(ca_path))
+            except (OSError, ValueError):
+                raise ValueError('Readable valid CA bundle required; no default fallback.') from None
+            if not context.check_hostname or context.verify_mode != ssl.CERT_REQUIRED:
+                raise ValueError('Certificate and hostname verification required.')
+            self.tls_diagnostic.update(ca_source='explicit_reviewed_bundle',
+                                       ca_sha256=hashlib.sha256(ca_bytes).hexdigest())
         super().__init__(credentials)
+        # Configure this diagnostic Session only; preserve common pacing/auth logic.
+        self.session.trust_env = False
+        self.session.verify = str(ca_path) if ca_path is not None else True
+        self.session.mount('https://', HTTPAdapter(max_retries=0))
         self.real, self.allow_auth, self.clock = real, allow_auth, clock
         self.allowed = {(r.api_id,r.stock_code,r.base_dt,r.adjustment) for r in plans}
         self.attempted, self.counts = set(), {'oauth':0,'daily':0}
@@ -216,8 +238,9 @@ class DailyDiagnosticClient(KiwoomClient):
             raise KiwoomError('Only explicit OAuth may use this path.')
         try:
             response = self._request(path,body,headers)
-        except requests.RequestException:
-            self.auth_diagnostic = {'status':'transport_error','reason':'OAuth transport failed; no retry.'}
+        except requests.RequestException as exc:
+            self.auth_diagnostic = {'status':'transport_error','reason':'OAuth transport failed; no retry.',
+                                    'exception_type':type(exc).__name__}
             raise KiwoomError('OAuth transport failed; no retry.') from None
         try:
             payload = response.json()
@@ -314,7 +337,8 @@ def save_report(folder, report):
 def execute(plans, client, folder):
     report = {'version':'step7-b2-a-v1','mode':'live_http_diagnostic','environment':client.credentials.environment,
               'data_origin':'mock_server_unverified_source' if client.credentials.environment=='mock' else 'real_server_unverified_daily_bars',
-              'database_access':False,'results':[], 'spec_review':dict(SPEC_REVIEW)}
+              'database_access':False,'results':[], 'spec_review':dict(SPEC_REVIEW),
+              'tls':dict(client.tls_diagnostic)}
     authorized = client.prepare_auth()
     failed = not authorized
     for request in plans:
@@ -339,6 +363,7 @@ def main(argv=None):
     parser.add_argument('--stock-code',action='append',help='Repeat for up to two distinct stocks; default 005930 and 000660')
     parser.add_argument('--base-date',help='Explicit historical base date YYYYMMDD; required with --real')
     parser.add_argument('--adjustment',choices=('0','1'),default='0')
+    parser.add_argument('--ca-bundle',type=Path,help='Explicit reviewed local CA PEM; no fallback if unavailable/invalid')
     parser.add_argument('--output-dir',type=Path,default=DEFAULT_OUTPUT)
     args = parser.parse_args(argv)
     codes = args.stock_code if args.stock_code is not None else list(DEFAULT_CODES)
@@ -359,6 +384,8 @@ def main(argv=None):
                 'environment':args.environment,'maximum_daily_requests':len(codes),'oauth_requests':0,'spec_review':dict(SPEC_REVIEW),
                 'requests':[{'api_id':args.api_id,'path':daily.API_PATH,'body':dict(stk_cd=code,base_dt=args.base_date,upd_stkpc_tp=args.adjustment)} for code in codes],
                 'required_for_live':'--real and explicit past --base-date; .env environment match; token or --authenticate',
+                'tls':{'trust_env':False,'ca_bundle_supplied':args.ca_bundle is not None,
+                       'certificate_verification':True,'hostname_verification':True},
                 'output_dir':str(output_root(args.output_dir)),'files_written':False},ensure_ascii=False,indent=2))
             return 0
         stage = 'historical_date_guard'
@@ -376,7 +403,7 @@ def main(argv=None):
         folder.mkdir(parents=True,mode=0o700,exist_ok=False)
         stage = 'client_initialization'
         client = DailyDiagnosticClient(credentials,plans,real=args.real,allow_auth=args.authenticate,
-                                       access_token=os.environ.get('KIWOOM_ACCESS_TOKEN'))
+                                       access_token=os.environ.get('KIWOOM_ACCESS_TOKEN'),ca_bundle=args.ca_bundle)
         try:
             stage = 'probe_execution'
             report,path = execute(plans,client,folder)
@@ -386,7 +413,7 @@ def main(argv=None):
             client.close()
     except (ValueError, KiwoomError):
         # Credential/config/transport exception values are never printed.
-        print(json.dumps({'status':'blocked','stage':stage,'reason':'Check request syntax, explicit past date, permitted output directory, .env credentials and environment match. Unsafe exception values are omitted.'}))
+        print(json.dumps({'status':'blocked','stage':stage,'reason':'Check request syntax, explicit past date, permitted output directory, .env credentials, environment match and explicit CA bundle. Unsafe exception values are omitted.'}))
         return 1
     except OSError:
         print(json.dumps({'status':'output_error','reason':'Diagnostic output path unavailable; no operating DB fallback.'}))
