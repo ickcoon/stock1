@@ -35,3 +35,6 @@ tokens.json
 token_cache.json
 *_token.json
 credentials.json
+
+# Standalone daily-chart live diagnostics (not operational SQLite data).
+/diagnostics/
