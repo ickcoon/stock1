@@ -302,6 +302,8 @@ except ValueError:
 
     def test_scheduler_to_fake_http_end_to_end(self):
         at=self.at.replace(hour=9,minute=20,second=0)
+        # Before market open the simulated clock is ahead of the real token clock.
+        self.client.token=fixtures.Token('token',max(self.at,at)+timedelta(hours=1))
         with closing(fixtures.Store(Path(self.path.parent)/'scheduled.db')) as store:
             snapshot=Snapshot(at,[dict(bigd_rank=str(i),stk_cd=f'{100000+i:06}',stk_nm=f'Stock{i}') for i in range(1,21)])
             with patch.object(self.client,'fetch_once',return_value=snapshot), \

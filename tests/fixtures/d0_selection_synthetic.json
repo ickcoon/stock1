@@ -1,0 +1,23 @@
+{
+  "description": "SYNTHETIC selection and review; for temporary test stores only, not an actual D0 event",
+  "selection": {
+    "event_id": "SYNTHETIC-ONE", "source": "SYNTHETIC explicit observation selection",
+    "status": "selected_for_observation", "stock_code": "005930", "environment": "mock", "market": "KRX",
+    "selected_at": "2026-10-28T15:30:02+09:00", "evaluation_sha256": "",
+    "reasons": ["SYNTHETIC ready Step 6-D review and explicit observation selection"]
+  },
+  "evaluation": {
+    "sources": {
+      "ranking": {"id": "SYNTHETIC-ranking", "api_id": "ka00198", "environment": "mock", "source_kind": "collection", "test_mode": false, "status": "success", "market": {"stex_tp": "1"}, "collected_at": "2026-10-28T15:29:59+09:00", "request_started_at": "2026-10-28T15:29:59+09:00", "response_received_at": "2026-10-28T15:30:00+09:00"},
+      "turnover": {"id": "SYNTHETIC-turnover", "api_id": "ka10032", "environment": "mock", "source_kind": "collection", "test_mode": false, "status": "success", "pagination_complete": true, "market": {"stex_tp": "1"}, "collected_at": "2026-10-28T15:29:59+09:00", "request_started_at": "2026-10-28T15:29:59+09:00", "response_received_at": "2026-10-28T15:30:00+09:00"}
+    },
+    "capital_integration": {"reference_at": "2026-10-28T15:30:00+09:00"},
+    "rows": [{
+      "stock_code": "005930", "stock_name": "SYNTHETIC stock", "primary_sector": "SYNTHETIC sector", "sectors": ["SYNTHETIC sector"],
+      "ranking_0198": 1, "top5_appearances": 3, "turnover_rank": 1, "turnover_raw": "100000", "turnover_won_diagnostic": "100000000000", "change_percent_raw": "+2.00",
+      "market_cap_won_verified": "300000000000", "capital_band": {"band": "primary_exploration", "verified": true}, "candidate_confirmed": false,
+      "capital_reference": {"api_id": "ka10001", "environment": "mock", "requested_code": "005930", "source_fingerprint": "SYNTHETIC-capital-fingerprint", "request_started_at": "2026-10-28T15:29:59+09:00", "response_received_at": "2026-10-28T15:30:00+09:00", "retrieved_at": "2026-10-28T15:30:00+09:00", "raw": {"stk_cd": "005930", "mac": "3000", "cur_prc": "+100"}},
+      "qualification": {"final_review_allowed": true, "reasons": [], "sector_co_rise": true, "candidate_confirmed": false, "checks": {"market_cap_3000_eok": true, "closing_turnover_1000_eok": true, "turnover_rank_40": true}}
+    }]
+  }
+}
