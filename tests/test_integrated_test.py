@@ -139,12 +139,23 @@ class IntegratedTests(unittest.TestCase):
         self.assertEqual(hashlib.sha256(self.path.read_bytes()).digest(),before)
 
     def test_atomic_path_claim_wins_before_store_and_http(self):
+        # Like a Windows short/junction path, this spelling differs after resolve().
+        alias=self.folder/'path-alias'
+        alias.mkdir()
+        self.path=alias/'..'/self.path.name
+        target=self.path.resolve()
+        self.assertNotEqual(self.path,target)
+        injected=[]
         original_open=Path.open
         def racing(path,*args,**kwargs):
-            if path==self.path and args and args[0]=='xb':
+            if path==target and args and args[0]=='xb':
+                injected.append(path)
                 with original_open(path,'wb') as writer: writer.write(b'another owner')
             return original_open(path,*args,**kwargs)
-        with patch.object(Path,'open',racing),self.assertRaises(FileExistsError): self.run_test()
+        with patch.object(Path,'open',racing), patch('kiwoom_collector.integrated_test.Store') as store:
+            with self.assertRaises(FileExistsError): self.run_test()
+        store.assert_not_called()
+        self.assertEqual(injected,[target])
         self.assertEqual(self.path.read_bytes(),b'another owner')
         self.session.post.assert_not_called()
 
