@@ -26,7 +26,7 @@ def latest(document, code, kind, cutoff):
                 and observed <= received <= cutoff
                 and item.get('environment') == document['environment']
                 and item.get('market') == document['market']
-                and item.get('source_kind') == 'fixture' and item.get('verified') is True):
+                and item.get('source_kind') == document['source_kind'] and item.get('verified') is True):
             continue
         if observed.strftime('%H:%M') != cutoff.strftime('%H:%M'):
             continue
@@ -114,7 +114,7 @@ def analyze(document, *, generated_at=None):
                                 -Decimal(s['evidence']['cumulative_turnover_won']), s['name']))
     for index, sector in enumerate(sectors[:3], 1):
         sector['rank'] = index
-    result = dict(schema_version=SCHEMA, selection_type='AM_MOMENTUM', source_kind='fixture', environment=base['environment'], market=base['market'],
+    result = dict(schema_version=SCHEMA, selection_type='AM_MOMENTUM', source_kind=base['source_kind'], environment=base['environment'], market=base['market'],
                   trade_date=base['trade_date'], selection_cutoff_at=base['selection_cutoff_at'],
                   candidate_confirmed=False, d0_storage_allowed=False, completeness=base['completeness'],
                   policy=dict(version='7-C6-relative-turnover-v2', market_cap_exclusive_min_won=str(3000*EOK),
@@ -123,7 +123,7 @@ def analyze(document, *, generated_at=None):
                               minimum_top5_hits=2, minimum_sector_companions=2, weighted_score=False,
                               ambiguous_sector='hold', stale_metrics='hold', validated_optimal_strategy=False),
                   sectors=sectors[:3], held_sectors=held_sectors, candidates=candidates, analysis=base,
-                  input_fixture=json.loads(am.canonical(document)))
+                  input_document=json.loads(am.canonical(document)))
     result['evaluation_reference'] = hashlib.sha256(am.canonical(result).encode()).hexdigest()
     return result
 
@@ -155,7 +155,7 @@ def turnover_comparison(document, code, cutoff, current):
 
 
 def validate(report):
-    if report.get('schema_version') != SCHEMA or report.get('source_kind') != 'fixture':
+    if report.get('schema_version') != SCHEMA or report.get('source_kind') not in ('fixture', 'readonly_adapter'):
         raise ValueError('unsupported_briefing')
     unsigned = {k: v for k, v in report.items() if k != 'evaluation_reference'}
     if hashlib.sha256(am.canonical(unsigned).encode()).hexdigest() != report['evaluation_reference']:
@@ -164,7 +164,7 @@ def validate(report):
     tg.validate(report['analysis'])
     # A checksum alone does not establish consistency: reproduce all decisions
     # from the retained point-in-time input, including excluded candidates.
-    expected = analyze(report['input_fixture'], generated_at=report['analysis']['generated_at'])
+    expected = analyze(report['input_document'], generated_at=report['analysis']['generated_at'])
     if report != expected:
         raise ValueError('briefing_analysis_mismatch')
 
@@ -175,8 +175,9 @@ def format_telegram(report):
     cutoff = am.instant(report['selection_cutoff_at'])
     clock = f'{cutoff.hour}시 {cutoff.minute}분' + (f' {cutoff.second}초' if cutoff.second else '')
     environment = '모의 환경' if report['environment'] == 'mock' else '실전 환경 표기'
+    source_text = '합성 테스트 데이터' if report['source_kind'] == 'fixture' else '읽기 전용 수집 자료 검토'
     lines = [f'아르비스 오전 브리핑. {clock} 기준.',
-             f'합성 테스트 데이터. {environment}. 관측 기반 관심 후보입니다.']
+             f'{source_text}. {environment}. 관측 기반 관심 후보입니다.']
     if report['completeness']['missing_slots']:
         lines.append('관측 누락: ' + ', '.join(s.replace(':', '시 ')+'분' for s in report['completeness']['missing_slots']) + '.')
     if not report['sectors']:

@@ -1,5 +1,8 @@
 # Step 7-C6 — 오전 주도섹터 및 관심 후보 문자 브리핑
 
+Step 7-C7의 별도 읽기 전용 실수집 입력 계약은 [AM_INPUT_ADAPTER.md](AM_INPUT_ADAPTER.md)를 따른다.
+이 문서의 fixture 실행은 계속 합성 전용이며 실수집 보고서의 자동 전송은 허용하지 않는다.
+
 집 PC 작업 폴더는 기존 `stock1`만 사용한다. 운영 DB, 수집기, Windows 작업 스케줄러,
 Step 7-A 추적 엔진과 C4 D0 저장 로직은 변경하지 않는다.
 

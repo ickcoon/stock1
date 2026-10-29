@@ -124,7 +124,7 @@ def validate(report, secrets=()):
         return report
     keys(report, TOP_KEYS)
     require(report['schema_version'] == am.SCHEMA and report['selection_type'] == 'AM_MOMENTUM')
-    require(report['source_kind'] == 'fixture', 'unsupported_source_kind')
+    require(report['source_kind'] in ('fixture', 'readonly_adapter'), 'unsupported_source_kind')
     require(report['environment'] in ('mock', 'real') and report['market'] in ('KRX', 'NXT', 'SOR'))
     require(report['environment'] != 'mock' or report['market'] == 'KRX')
     require(report['candidate_confirmed'] is False and report['d0_storage_allowed'] is False, 'unconfirmed_report_required')
@@ -132,7 +132,7 @@ def validate(report, secrets=()):
     require(date.fromisoformat(report['trade_date']) == cutoff.date())
     require(am.instant(report['generated_at']) >= cutoff)
     require('09:20' <= cutoff.strftime('%H:%M') <= '09:50')
-    require(report['notice'] == am.NOTICE)
+    require(report['notice'] == (am.NOTICE if report['source_kind'] == 'fixture' else am.ADAPTER_NOTICE))
     keys(report['policy'], POLICY_KEYS)
     require(report['policy'] == dict(version='exploratory-v1', minimum_top5_hits=2, latest_observed_rank_max=5,
                                    market_cap_min_won='300000000000', closing_turnover_requirement_applied=False,
@@ -220,7 +220,7 @@ def summary(report, *, attached=False):
         return am_briefing.format_telegram(report)
     validate(report)
     lines = ['아르비스 오전 브리핑', report['trade_date']+' | 기준 '+am.instant(report['selection_cutoff_at']).strftime('%H:%M:%S')+' KST',
-             '환경: '+report['environment']+' / '+report['market']+' / 합성 fixture', '잠정 분석 · candidate_confirmed=false · 매매 확정 아님']
+             '환경: '+report['environment']+' / '+report['market']+' / '+('합성 fixture' if report['source_kind'] == 'fixture' else '읽기 전용 수집 자료'), '잠정 분석 · candidate_confirmed=false · 매매 확정 아님']
     full = report['completeness']['top20_complete'] and report['completeness']['accepted_slots'] == list(am.SLOTS)
     rows = [r for r in report['rows'] if r['candidate_status'] != 'insufficient_evidence'] if full else []
     rows.sort(key=lambda r: (-r['top5_appearances'], -r['top20_appearances'], r['rank_history'][-1]['rank'], r['stock_code']))
@@ -372,6 +372,7 @@ def deliver(report, text, html, config, *, session_factory=None, voice=None, voi
     """Explicit-send only entry point. Reservation survives all failures; no retries."""
     if voice is not None or voice_only:
         media_policy.require_legacy_media()
+    require(report.get('source_kind') != 'readonly_adapter', 'readonly_report_not_deliverable')
     require(TOKEN.fullmatch(config.token) and CHAT.fullmatch(config.chat_id) and config.chat_id in config.allowed, 'recipient_not_allowed')
     require(type(voice_only) is bool and (not voice_only or (voice is not None and html is None)), 'invalid_voice_only_request')
     validate(report, (config.token,config.chat_id))

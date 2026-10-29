@@ -15,10 +15,12 @@ from .quotes import CODE
 
 SCHEMA = 'am-momentum-review-v1'
 INPUT_SCHEMA = 'am-momentum-fixture-v1'
+ADAPTER_INPUT_SCHEMA = 'am-momentum-readonly-v1'
 PROJECT = Path(__file__).resolve().parent.parent
 REPORTS = PROJECT / 'reports'
 SLOTS = ('09:20', '09:30', '09:40', '09:50')
 NOTICE = '관심도·수급 분석 분류이며 매매 확정 신호가 아닙니다. 합성 fixture 보고서입니다.'
+ADAPTER_NOTICE = '읽기 전용 수집 자료 검토이며 매매 확정 신호가 아닙니다. 미검증 자료는 보류합니다.'
 SENSITIVE = re.compile(r'(?i)secret|token|password|authorization|cookie|app.?key|api.?key|account|credential|계좌|인증정보')
 
 
@@ -56,7 +58,8 @@ def canonical(value):
 
 def analyze(document, *, generated_at=None):
     privacy(document)
-    if document.get('schema_version') != INPUT_SCHEMA or document.get('source_kind') != 'fixture':
+    source = document.get('source_kind')
+    if (document.get('schema_version'), source) not in ((INPUT_SCHEMA, 'fixture'), (ADAPTER_INPUT_SCHEMA, 'readonly_adapter')):
         raise ValueError('explicit_synthetic_fixture_required')
     day = date.fromisoformat(document['trade_date'])
     env, market = document.get('environment'), document.get('market')
@@ -72,7 +75,7 @@ def analyze(document, *, generated_at=None):
     diagnostics, accepted, seen = [], [], set()
 
     def scope(item):
-        if item.get('environment') != env or item.get('market') != market or item.get('source_kind') != 'fixture':
+        if item.get('environment') != env or item.get('market') != market or item.get('source_kind') != source:
             raise ValueError('mixed_environment_market_or_source')
 
     def usable(item):
@@ -193,9 +196,9 @@ def analyze(document, *, generated_at=None):
                          d0_storage_allowed=False))
     priority = {'momentum_candidate': 0, 'attention_leader': 1, 'insufficient_evidence': 2}
     rows.sort(key=lambda r: (priority[r['candidate_status']], -r['top5_appearances'], -r['top20_appearances'], r['stock_code']))
-    result = dict(schema_version=SCHEMA, selection_type='AM_MOMENTUM', source_kind='fixture',
+    result = dict(schema_version=SCHEMA, selection_type='AM_MOMENTUM', source_kind=source,
                   trade_date=day.isoformat(), selection_cutoff_at=cutoff.isoformat(), generated_at=generated.isoformat(),
-                  environment=env, market=market, notice=NOTICE, candidate_confirmed=False, d0_storage_allowed=False,
+                  environment=env, market=market, notice=NOTICE if source == 'fixture' else ADAPTER_NOTICE, candidate_confirmed=False, d0_storage_allowed=False,
                   policy=dict(version='exploratory-v1', minimum_top5_hits=2, latest_observed_rank_max=5,
                               market_cap_min_won='300000000000', closing_turnover_requirement_applied=False,
                               liquidity='positive_intraday_value_with_explicit_verified_basis',

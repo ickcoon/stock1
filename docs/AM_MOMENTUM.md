@@ -1,5 +1,9 @@
 # Step 7-C5-A — AM_MOMENTUM portable review
 
+Step 7-C7 adds a separate read-only input contract; see [AM_INPUT_ADAPTER.md](AM_INPUT_ADAPTER.md).
+The original fixture contract below remains supported. Home PC development uses the existing stock1 directory.
+Morning turnover has no absolute floor; closing eligibility/D0 criteria remain separate.
+
 This is a fixture-only, offline analysis module. It never opens SQLite, calls Kiwoom, imports credentials, writes D0 events, or changes operational dashboards/schedulers. Synthetic mock and synthetic real scopes are supported separately. Neither is evidence of live market performance.
 
 ## Run in stock1-dev
