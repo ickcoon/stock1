@@ -267,9 +267,10 @@ def api_call(session, config, method, *, text=None, html=None, audio=None):
         raise BriefingError('telegram_transport_failed') from None
 
 
-def deliver(report, text, html, config, *, session_factory=None, voice=None, voice_method='sendVoice'):
+def deliver(report, text, html, config, *, session_factory=None, voice=None, voice_method='sendVoice', voice_only=False):
     """Explicit-send only entry point. Reservation survives all failures; no retries."""
     require(TOKEN.fullmatch(config.token) and CHAT.fullmatch(config.chat_id) and config.chat_id in config.allowed, 'recipient_not_allowed')
+    require(type(voice_only) is bool and (not voice_only or (voice is not None and html is None)), 'invalid_voice_only_request')
     validate(report, (config.token,config.chat_id))
     require(text == summary(report,attached=html is not None), 'message_analysis_mismatch')
     require(html is None or html == am.render(report), 'html_analysis_mismatch')
@@ -283,14 +284,31 @@ def deliver(report, text, html, config, *, session_factory=None, voice=None, voi
         validate_audio(report,*voice)
         scan(voice[1].data.decode('utf-8',errors='ignore'),(config.token,config.chat_id))
         if voice[1].is_test:
+            require(not voice_only, 'test_audio_not_deliverable')
             voice=None;voice_status='test_audio_text_only'
         else:
             voice_status='ready'
     root = STATE.resolve()
     require(root == PROJECT.resolve()/'notification_state', 'invalid_state_root')
     root.mkdir(exist_ok=True)
-    key = digest([report['trade_date'], report['selection_type'], report['schema_version'], report['environment'],
-                  report['market'], hashlib.sha256(config.chat_id.encode()).hexdigest()])
+    scope = [report['trade_date'], report['selection_type'], report['schema_version'], report['environment'],
+             report['market'], hashlib.sha256(config.chat_id.encode()).hexdigest()]
+    if voice_only:
+        legacy = root/(digest(scope)+'.json')
+        require(not legacy.is_symlink(), 'invalid_state_file')
+        if legacy.exists():
+            with legacy.open('r', encoding='utf-8') as stream:
+                raw = stream.read(4097)
+            require(len(raw) <= 4096, 'invalid_state_file')
+            previous = json.loads(raw, object_pairs_hook=unique_object)
+            require(isinstance(previous, dict), 'invalid_state_file')
+            # A completed text-only send may be followed by its separately approved voice.
+            # Never duplicate a prior bundled voice or an ambiguous/in-flight delivery.
+            if previous.get('status') != 'sent' or previous.get('voice_sent', False) is not False:
+                return dict(status='duplicate_blocked', candidate_confirmed=False)
+    # An independently approved voice-only delivery has its own one-shot reservation.
+    # Preserve the existing text/bundle key, including its historical reservations.
+    key = digest(scope + ['voice-only-v1'] if voice_only else scope)
     path = root/(key+'.json')
     require(not path.is_symlink(), 'invalid_state_file')
     state = dict(version='telegram-delivery-v1', status='reserved', message_sent=False, document_sent=False,voice_sent=False)
@@ -316,8 +334,9 @@ def deliver(report, text, html, config, *, session_factory=None, voice=None, voi
                 try:
                     for logger in loggers: logger.disabled=True
                     http.client.HTTPConnection.debuglevel=0
-                    api_call(session,config,'sendMessage',text=text)
-                    state.update(status='message_sent',message_sent=True); save()
+                    if not voice_only:
+                        api_call(session,config,'sendMessage',text=text)
+                        state.update(status='message_sent',message_sent=True); save()
                     if html is not None:
                         api_call(session,config,'sendDocument',html=html)
                         state['document_sent']=True
@@ -332,15 +351,56 @@ def deliver(report, text, html, config, *, session_factory=None, voice=None, voi
         # Even an unknown delivery result must retain its reservation to avoid duplicate sends.
         return dict(status='failed_or_unknown', reason=str(error) if isinstance(error,BriefingError) and str(error) in {'telegram_http_failed','telegram_api_failed','telegram_response_invalid','telegram_recipient_mismatch','telegram_transport_failed'} else 'delivery_failed',
                     message_sent=state['message_sent'],document_sent=state['document_sent'],voice_sent=state['voice_sent'],candidate_confirmed=False)
-    return dict(status='sent',message_sent=True,document_sent=html is not None,voice_sent=state['voice_sent'],voice_status='sent' if state['voice_sent'] else voice_status,candidate_confirmed=False)
+    return dict(status='sent',message_sent=state['message_sent'],document_sent=html is not None,voice_sent=state['voice_sent'],voice_status='sent' if state['voice_sent'] else voice_status,candidate_confirmed=False)
+
+
+def preflight(report_path, html_path=None):
+    """Read-only checks: no HTTP, reservation creation or credential output."""
+    stage = 'configuration'
+    safe_codes = {
+        'configuration_required', 'private_chat_allowlist_required', 'recipient_not_allowed',
+        'invalid_report', 'unsupported_source_kind', 'unconfirmed_report_required',
+        'report_fingerprint_mismatch', 'sensitive_content_rejected', 'message_too_long',
+        'invalid_report_root', 'report_path_rejected', 'report_too_large',
+        'duplicate_json_key', 'nonfinite_json', 'html_analysis_mismatch',
+        'invalid_state_root', 'invalid_state_file',
+    }
+    try:
+        config = Configuration.from_environment()
+        secrets = (config.token, config.chat_id)
+        stage = 'json_report'
+        report, text, _ = prepare(report_path, secrets=secrets)
+        stage = 'html_attachment'
+        if html_path is not None:
+            prepare(report_path, html_path, secrets=secrets)
+        stage = 'delivery_reservation'
+        root = STATE.resolve()
+        require(root == PROJECT.resolve()/'notification_state', 'invalid_state_root')
+        key = digest([report['trade_date'], report['selection_type'], report['schema_version'],
+                      report['environment'], report['market'], hashlib.sha256(config.chat_id.encode()).hexdigest()])
+        path = root/(key+'.json')
+        require(not path.is_symlink(), 'invalid_state_file')
+        return dict(status='duplicate_blocked' if path.exists() else 'preflight_ok',
+                    configuration_valid=True, json_validated=True,
+                    html_validated=html_path is not None, environment=report['environment'],
+                    candidate_confirmed=report['candidate_confirmed'], network_called=False)
+    except (ValueError, TypeError, KeyError, OSError, AttributeError, ArithmeticError) as error:
+        code = str(error) if isinstance(error, BriefingError) and str(error) in safe_codes else 'validation_failed'
+        return dict(status='preflight_rejected', stage=stage, reason=code, network_called=False)
 
 
 def main(argv=None):
     parser=argparse.ArgumentParser(description='Arvis AM briefing; default dry-run, no scheduler integration')
     parser.add_argument('--report',type=Path,required=True)
     parser.add_argument('--html',type=Path)
-    parser.add_argument('--send',action='store_true',help='Actually send only after user approval')
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument('--send',action='store_true',help='Actually send only after user approval')
+    mode.add_argument('--check',action='store_true',help='Validate configuration/report without network or state writes')
     args=parser.parse_args(argv)
+    if args.check:
+        result = preflight(args.report, args.html)
+        print(json.dumps(result))
+        return 0 if result['status']=='preflight_ok' else 1
     try:
         config=Configuration.from_environment() if args.send else None
         secrets=tuple(os.environ.get(k,'') for k in ('ARVIS_TELEGRAM_BOT_TOKEN','ARVIS_TELEGRAM_CHAT_ID'))

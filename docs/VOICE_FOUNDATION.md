@@ -1,5 +1,7 @@
 # Step 7-C5-C — 아르비스 양방향 음성 브리핑 기반
 
+후속 C5-E의 실제 OpenAI TTS 어댑터 및 분리된 생성/음성 전송 모드는 [OPENAI_TTS.md](OPENAI_TTS.md)를 따른다. 아래 내용은 C5-C 기반 계약과 당시 검증 기록이다. 구형 CLI의 미설정/fixture 음성 `--send` 문자 대체는 C5-E에서 거절하도록 강화했다.
+
 ## 현재 구현과 경계
 
 개발 폴더 stock1-dev 전용 기능이다. 기존 AM/Telegram 계약을 재사용하며 운영 폴더·DB·수집기·스케줄러·C4/D0는 접근/변경하지 않는다. 실제 OpenAI API, 유료 TTS, Telegram 발송, 업데이트 수신, 음성 다운로드, STT/GPT 호출, 자동 스케줄은 이번 단계에서 실행하지 않는다.

@@ -258,3 +258,49 @@ class TelegramBriefingTests(unittest.TestCase):
         self.assertEqual(sum(r['status']=='duplicate_blocked' for r in results),7)
         self.assertEqual(self.session.post.call_count,2)
         self.assertEqual(len(list(tg.STATE.iterdir())),1)
+
+    def test_preflight_text_only_no_network_or_state_writes(self):
+        with patch.object(tg.Configuration,'from_environment',return_value=self.config), patch.object(tg.requests,'Session') as session:
+            result=tg.preflight(self.json)
+        self.assertEqual(result['status'],'preflight_ok')
+        self.assertFalse(result['html_validated'])
+        self.assertEqual(result['environment'],'mock')
+        self.assertFalse(result['candidate_confirmed'])
+        session.assert_not_called()
+        self.assertFalse(tg.STATE.exists())
+        for secret in (FAKE_TOKEN,FAKE_CHAT,str(self.root)):
+            self.assertNotIn(secret,json.dumps(result))
+
+    def test_preflight_configuration_reports_only_static_failure(self):
+        for code in ('configuration_required','private_chat_allowlist_required','recipient_not_allowed',FAKE_TOKEN):
+            with patch.object(tg.Configuration,'from_environment',side_effect=tg.BriefingError(code)):
+                result=tg.preflight(self.json)
+            self.assertEqual(result['stage'],'configuration')
+            self.assertEqual(result['reason'],code if code != FAKE_TOKEN else 'validation_failed')
+            self.assertNotIn(FAKE_TOKEN,json.dumps(result))
+
+    def test_preflight_json_and_optional_html_are_separate_stages(self):
+        with patch.object(tg.Configuration,'from_environment',return_value=self.config):
+            self.html.write_text('invalid attachment',encoding='utf-8')
+            self.assertEqual(tg.preflight(self.json)['status'],'preflight_ok')
+            result=tg.preflight(self.json,self.html)
+            self.assertEqual(result['stage'],'html_attachment')
+            self.assertEqual(result['reason'],'html_analysis_mismatch')
+            self.json.write_text('{}',encoding='utf-8')
+            self.assertEqual(tg.preflight(self.json)['stage'],'json_report')
+
+    def test_preflight_detects_secret_in_report(self):
+        config=tg.Configuration(FAKE_TOKEN,'5930',('5930',))
+        with patch.object(tg.Configuration,'from_environment',return_value=config):
+            result=tg.preflight(self.json)
+        # Privacy checks run before any transport; no bypass for fixture content.
+        self.assertEqual(result['reason'],'sensitive_content_rejected')
+        self.assertFalse(tg.STATE.exists())
+
+    def test_check_cli_and_existing_reservation_are_read_only(self):
+        self.deliver(html=False)
+        before={p.name:p.read_bytes() for p in tg.STATE.iterdir()}
+        with patch.object(tg.Configuration,'from_environment',return_value=self.config), patch('sys.stdout',new_callable=io.StringIO) as output:
+            self.assertEqual(tg.main(['--report',str(self.json),'--check']),1)
+        self.assertEqual(json.loads(output.getvalue())['status'],'duplicate_blocked')
+        self.assertEqual(before,{p.name:p.read_bytes() for p in tg.STATE.iterdir()})

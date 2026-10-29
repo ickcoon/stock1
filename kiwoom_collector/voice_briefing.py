@@ -82,7 +82,7 @@ class SpeechScript:
 def build_script(report):
     tg.validate(report);safe(report)
     cutoff=tg.am.instant(report['selection_cutoff_at']);day=cutoff.date()
-    lines=['안녕하세요. 아르비스의 오전 관심도 브리핑입니다. 실제 음성을 연결하면 인공지능이 생성한 음성으로 안내합니다.',
+    lines=['안녕하세요. 아르비스의 오전 관심도 브리핑입니다. 이 음성은 인공지능이 생성한 음성입니다.',
            korean_number(str(day.year))+' 년 '+korean_number(str(day.month))+' 월 '+korean_number(str(day.day))+' 일, 분석 기준은 '+pronounce_time(report['selection_cutoff_at'])+'입니다.',
            '데이터 환경은 '+('모의, mock' if report['environment']=='mock' else '실전 표시, real')+'입니다. 다만 이 보고서의 출처는 합성 픽스처이며 실측 결과가 아닙니다.',
            '이번 내용은 매매 확정 신호가 아닙니다. 모든 후보는 미확정이며 확정 선정이나 주문으로 연결하지 않습니다.']
@@ -96,7 +96,8 @@ def build_script(report):
         lines+=['종목명은 보고서에 없으므로 종목 코드로 읽겠습니다. 관심도 순서이며 수익률 순위가 아닙니다.']
         for row in rows[:3]:
             words='종목 코드 '+pronounce_code(row['stock_code'])+'입니다. 상위 다섯 순위에 '+korean_number(str(row['top5_appearances']))+' 회, 상위 스무 순위에 '+korean_number(str(row['top20_appearances']))+' 회 등장했습니다.'
-            words+=' 근거는 '+', '.join(tg.REASONS[r] for r in row['reasons'][:2])+'입니다.'
+            reasons=[tg.REASONS[r].replace('TOP5','상위 다섯 순위').replace('TOP20','상위 스무 순위') for r in row['reasons'][:2]]
+            words+=' 근거는 '+', '.join(reasons)+'입니다.'
             price=row['evidence']['price']['observations']
             if price: words+=' 마지막 검증 관측 가격은 '+pronounce_price(price[-1]['value'])+'이며 '+pronounce_time(price[-1]['observed_at'])+' 관측입니다.'
             missing=[name for key,name in [('price','가격'),('turnover','거래대금'),('market_cap','시가총액'),('liquidity','유동성')] if not row['evidence'][key]['available']]
@@ -219,6 +220,7 @@ def main(argv=None):
             print(json.dumps(dict(status='dry_run',script=asdict(script),audio_ready=audio is not None,test_audio=audio.is_test if audio else False,fallback=error,candidate_confirmed=False)))
             return 0
         config=tg.Configuration.from_environment()
+        tg.require(audio is not None and not audio.is_test, 'real_audio_required')
         result=tg.deliver(report,text,html,config,voice=(script,audio) if audio else None,voice_method=args.method)
         print(json.dumps(result));return 1 if result['status']=='failed_or_unknown' else 0
     except Exception:
