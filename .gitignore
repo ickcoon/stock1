@@ -41,3 +41,6 @@ credentials.json
 
 # Portable local AM analysis reports.
 /reports/
+
+# Independent Telegram delivery reservations (no credentials).
+/notification_state/
