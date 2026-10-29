@@ -234,17 +234,23 @@ class Configuration:
         return cls(token,chat,allowed)
 
 
-def api_call(session, config, method, *, text=None, html=None):
-    require(method in ('sendMessage','sendDocument'))
+def api_call(session, config, method, *, text=None, html=None, audio=None):
+    require(method in ('sendMessage','sendDocument','sendVoice','sendAudio'))
     data = dict(chat_id=config.chat_id)
     kwargs = dict(timeout=(5,20), allow_redirects=False, verify=True)
     if method == 'sendMessage':
         data['text'] = text
         kwargs['json'] = data
-    else:
+    elif method == 'sendDocument':
         data['caption'] = '아르비스 상세 HTML — 다운로드 후 브라우저로 열기 · 잠정 분석'
         kwargs['data'] = data
         kwargs['files'] = {'document': ('arvis-am-review.html', html.encode('utf-8'), 'text/html')}
+    else:
+        from .voice_briefing import mp3_duration
+        mp3_duration(audio)
+        data['caption'] = '아르비스 AI 합성 음성 · 잠정 분석 · 매매 확정 아님'
+        kwargs['data'] = data
+        kwargs['files'] = {('voice' if method == 'sendVoice' else 'audio'): ('arvis-am-briefing.mp3',audio,'audio/mpeg')}
     try:
         response = session.post('https://api.telegram.org/bot'+config.token+'/'+method, **kwargs)
         if response.status_code != 200:
@@ -261,7 +267,7 @@ def api_call(session, config, method, *, text=None, html=None):
         raise BriefingError('telegram_transport_failed') from None
 
 
-def deliver(report, text, html, config, *, session_factory=None):
+def deliver(report, text, html, config, *, session_factory=None, voice=None, voice_method='sendVoice'):
     """Explicit-send only entry point. Reservation survives all failures; no retries."""
     require(TOKEN.fullmatch(config.token) and CHAT.fullmatch(config.chat_id) and config.chat_id in config.allowed, 'recipient_not_allowed')
     validate(report, (config.token,config.chat_id))
@@ -269,6 +275,17 @@ def deliver(report, text, html, config, *, session_factory=None):
     require(html is None or html == am.render(report), 'html_analysis_mismatch')
     scan(text,(config.token,config.chat_id))
     if html is not None: scan(html,(config.token,config.chat_id))
+    voice_status='not_requested'
+    require(voice_method in ('sendVoice','sendAudio'),'invalid_voice_method')
+    if voice is not None:
+        from .voice_briefing import validate_audio
+        require(isinstance(voice,tuple) and len(voice)==2,'invalid_voice_bundle')
+        validate_audio(report,*voice)
+        scan(voice[1].data.decode('utf-8',errors='ignore'),(config.token,config.chat_id))
+        if voice[1].is_test:
+            voice=None;voice_status='test_audio_text_only'
+        else:
+            voice_status='ready'
     root = STATE.resolve()
     require(root == PROJECT.resolve()/'notification_state', 'invalid_state_root')
     root.mkdir(exist_ok=True)
@@ -276,7 +293,7 @@ def deliver(report, text, html, config, *, session_factory=None):
                   report['market'], hashlib.sha256(config.chat_id.encode()).hexdigest()])
     path = root/(key+'.json')
     require(not path.is_symlink(), 'invalid_state_file')
-    state = dict(version='telegram-delivery-v1', status='reserved', message_sent=False, document_sent=False)
+    state = dict(version='telegram-delivery-v1', status='reserved', message_sent=False, document_sent=False,voice_sent=False)
     try:
         stream = path.open('x+',encoding='utf-8')
     except FileExistsError:
@@ -304,6 +321,9 @@ def deliver(report, text, html, config, *, session_factory=None):
                     if html is not None:
                         api_call(session,config,'sendDocument',html=html)
                         state['document_sent']=True
+                    if voice is not None:
+                        api_call(session,config,voice_method,audio=voice[1].data)
+                        state['voice_sent']=True
                     state['status']='sent'; save()
                 finally:
                     for logger,disabled in zip(loggers,previous): logger.disabled=disabled
@@ -311,8 +331,8 @@ def deliver(report, text, html, config, *, session_factory=None):
     except Exception as error:
         # Even an unknown delivery result must retain its reservation to avoid duplicate sends.
         return dict(status='failed_or_unknown', reason=str(error) if isinstance(error,BriefingError) and str(error) in {'telegram_http_failed','telegram_api_failed','telegram_response_invalid','telegram_recipient_mismatch','telegram_transport_failed'} else 'delivery_failed',
-                    message_sent=state['message_sent'],document_sent=state['document_sent'],candidate_confirmed=False)
-    return dict(status='sent',message_sent=True,document_sent=html is not None,candidate_confirmed=False)
+                    message_sent=state['message_sent'],document_sent=state['document_sent'],voice_sent=state['voice_sent'],candidate_confirmed=False)
+    return dict(status='sent',message_sent=True,document_sent=html is not None,voice_sent=state['voice_sent'],voice_status='sent' if state['voice_sent'] else voice_status,candidate_confirmed=False)
 
 
 def main(argv=None):
