@@ -22,6 +22,7 @@ from requests.adapters import HTTPAdapter
 from urllib3 import exceptions as ue
 
 from . import telegram_briefing as tg, voice_briefing as vb
+from . import media_policy
 
 MODELS = ('gpt-4o-mini-tts', 'gpt-4o-mini-tts-2025-12-15')
 VOICES = ('alloy', 'ash', 'ballad', 'coral', 'echo', 'fable', 'onyx', 'nova',
@@ -202,6 +203,7 @@ class OpenAITTS:
         self.attempted = False
 
     def synthesize(self, script):
+        media_policy.require_legacy_media()
         settings = self.settings
         settings.validate(require_key=True)
         validate_script(script, (settings.key,))
@@ -305,6 +307,7 @@ def paths_for(name):
 
 
 def generate_once(report, settings, name, *, approved=False, session_factory=None):
+    media_policy.require_legacy_media()
     tg.require(approved is True, 'tts_approval_required')
     settings.validate(require_key=True)
     script = vb.build_script(report)

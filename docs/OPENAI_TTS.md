@@ -1,5 +1,9 @@
 # Step 7-C5-E — 한국어 TTS와 독립 Telegram 음성 전송
 
+> Step 7-C6부터 OpenAI TTS 실행과 Telegram 음성 전송은 코드 정책으로 차단된다.
+> 아래 생성/전송 설명은 보존된 이전 구현 기록이다. 음성 예약은 재시도하지 않는다.
+> 집 PC는 기존 `stock1`만 사용한다. 현재 문자 중심 흐름은 [AM_SECTOR_BRIEFING.md](AM_SECTOR_BRIEFING.md)를 따른다.
+
 개발 폴더 stock1-dev 전용이다. 운영 경로/DB/수집기/스케줄러, 실시간 시세, STT/GPT, 자동 스케줄은 연결하지 않는다. 이 단계에서는 실제 유료 API나 Telegram을 호출하지 않는다. C5-D 미커밋 진단 개선과 기존 문자 전송 계약을 보존한다.
 
 ## 모델과 공식 계약

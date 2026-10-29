@@ -21,6 +21,8 @@ def report(document=None):
 
 class VoiceFoundationTests(unittest.TestCase):
     def setUp(self):
+        # Preserve legacy offline coverage without enabling production voice.
+        self.enterContext(patch('kiwoom_collector.media_policy.require_legacy_media'))
         self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup);self.root=Path(self.temp.name)
         for key,value in [('PROJECT',self.root),('REPORTS',self.root/'reports'),('STATE',self.root/'notification_state')]:self.enterContext(patch.object(tg,key,value))
         tg.REPORTS.mkdir();self.report=report();self.script,self.audio,_=vb.synthesize(self.report,vb.SilenceFixtureTTS())

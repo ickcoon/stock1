@@ -16,6 +16,7 @@ from requests.adapters import HTTPAdapter
 from urllib3 import exceptions as ue
 
 from . import am_momentum as am
+from . import media_policy
 
 PROJECT = Path(__file__).resolve().parent.parent
 REPORTS = PROJECT / 'reports'
@@ -117,6 +118,10 @@ def digest(value):
 
 def validate(report, secrets=()):
     scan(report, secrets)
+    if isinstance(report, dict) and report.get('schema_version') == 'am-sector-briefing-v1':
+        from . import am_briefing
+        am_briefing.validate(report)
+        return report
     keys(report, TOP_KEYS)
     require(report['schema_version'] == am.SCHEMA and report['selection_type'] == 'AM_MOMENTUM')
     require(report['source_kind'] == 'fixture', 'unsupported_source_kind')
@@ -210,6 +215,9 @@ def validate(report, secrets=()):
 
 
 def summary(report, *, attached=False):
+    if report.get('schema_version') == 'am-sector-briefing-v1':
+        from . import am_briefing
+        return am_briefing.format_telegram(report)
     validate(report)
     lines = ['아르비스 오전 브리핑', report['trade_date']+' | 기준 '+am.instant(report['selection_cutoff_at']).strftime('%H:%M:%S')+' KST',
              '환경: '+report['environment']+' / '+report['market']+' / 합성 fixture', '잠정 분석 · candidate_confirmed=false · 매매 확정 아님']
@@ -239,6 +247,19 @@ def summary(report, *, attached=False):
     return text
 
 
+def render_report(report):
+    if report.get('schema_version') == 'am-sector-briefing-v1':
+        from . import am_briefing
+        return am_briefing.render(report)
+    return am.render(report)
+
+
+def delivery_schema(report):
+    # Keep the pre-existing day/recipient reservation namespace across formats.
+    # An old reserved, failed or sent briefing must still block a second send.
+    return am.SCHEMA if report['schema_version'] == 'am-sector-briefing-v1' else report['schema_version']
+
+
 def read_report(path, suffix, limit):
     root = REPORTS.resolve()
     require(root == PROJECT.resolve()/'reports', 'invalid_report_root')
@@ -265,7 +286,7 @@ def prepare(report_path, html_path=None, *, secrets=()):
     html = None
     if html_path is not None:
         html = read_report(html_path,'.html',MAX_HTML)
-        require(html == am.render(report), 'html_analysis_mismatch')
+        require(html == render_report(report), 'html_analysis_mismatch')
         scan(html, secrets)
     text = summary(report, attached=html is not None)
     scan(text, secrets)
@@ -290,6 +311,8 @@ class Configuration:
 
 
 def api_call(session, config, method, *, text=None, html=None, audio=None):
+    if method in ('sendVoice', 'sendAudio'):
+        media_policy.require_legacy_media()
     require(method in ('sendMessage','sendDocument','sendVoice','sendAudio'))
     data = dict(chat_id=config.chat_id)
     kwargs = dict(timeout=(5,20), allow_redirects=False, verify=True)
@@ -347,11 +370,13 @@ def api_call(session, config, method, *, text=None, html=None, audio=None):
 
 def deliver(report, text, html, config, *, session_factory=None, voice=None, voice_method='sendVoice', voice_only=False):
     """Explicit-send only entry point. Reservation survives all failures; no retries."""
+    if voice is not None or voice_only:
+        media_policy.require_legacy_media()
     require(TOKEN.fullmatch(config.token) and CHAT.fullmatch(config.chat_id) and config.chat_id in config.allowed, 'recipient_not_allowed')
     require(type(voice_only) is bool and (not voice_only or (voice is not None and html is None)), 'invalid_voice_only_request')
     validate(report, (config.token,config.chat_id))
     require(text == summary(report,attached=html is not None), 'message_analysis_mismatch')
-    require(html is None or html == am.render(report), 'html_analysis_mismatch')
+    require(html is None or html == render_report(report), 'html_analysis_mismatch')
     scan(text,(config.token,config.chat_id))
     if html is not None: scan(html,(config.token,config.chat_id))
     voice_status='not_requested'
@@ -369,7 +394,7 @@ def deliver(report, text, html, config, *, session_factory=None, voice=None, voi
     root = STATE.resolve()
     require(root == PROJECT.resolve()/'notification_state', 'invalid_state_root')
     root.mkdir(exist_ok=True)
-    scope = [report['trade_date'], report['selection_type'], report['schema_version'], report['environment'],
+    scope = [report['trade_date'], report['selection_type'], delivery_schema(report), report['environment'],
              report['market'], hashlib.sha256(config.chat_id.encode()).hexdigest()]
     if voice_only:
         legacy = root/(digest(scope)+'.json')
@@ -464,7 +489,7 @@ def preflight(report_path, html_path=None):
         stage = 'delivery_reservation'
         root = STATE.resolve()
         require(root == PROJECT.resolve()/'notification_state', 'invalid_state_root')
-        key = digest([report['trade_date'], report['selection_type'], report['schema_version'],
+        key = digest([report['trade_date'], report['selection_type'], delivery_schema(report),
                       report['environment'], report['market'], hashlib.sha256(config.chat_id.encode()).hexdigest()])
         path = root/(key+'.json')
         require(not path.is_symlink(), 'invalid_state_file')

@@ -1,5 +1,8 @@
 # Step 7-C5-C — 아르비스 양방향 음성 브리핑 기반
 
+> Step 7-C6 현재 음성 실행·전송은 비활성화됐다. 아래 내용은 보존된 기반 구현 기록이다.
+> [AM_SECTOR_BRIEFING.md](AM_SECTOR_BRIEFING.md)의 문자 브리핑과 음성 예약 격리 정책을 따른다.
+
 후속 C5-E의 실제 OpenAI TTS 어댑터 및 분리된 생성/음성 전송 모드는 [OPENAI_TTS.md](OPENAI_TTS.md)를 따른다. 아래 내용은 C5-C 기반 계약과 당시 검증 기록이다. 구형 CLI의 미설정/fixture 음성 `--send` 문자 대체는 C5-E에서 거절하도록 강화했다.
 
 ## 현재 구현과 경계

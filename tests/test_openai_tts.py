@@ -18,6 +18,8 @@ MP3 = (b'\xff\xfb\x90\x00'+bytes(413))*2500
 
 class OpenAITTSTests(unittest.TestCase):
     def setUp(self):
+        # Retired adapter diagnostics are tested only with fake transports.
+        self.enterContext(patch('kiwoom_collector.media_policy.require_legacy_media'))
         temp = tempfile.TemporaryDirectory()
         self.addCleanup(temp.cleanup)
         self.root = Path(temp.name)

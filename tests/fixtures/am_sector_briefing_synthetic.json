@@ -1,0 +1,1409 @@
+{
+  "schema_version": "am-momentum-fixture-v1",
+  "source_kind": "fixture",
+  "trade_date": "2026-10-29",
+  "environment": "mock",
+  "market": "KRX",
+  "rankings": [
+    {
+      "environment": "mock",
+      "market": "KRX",
+      "source_kind": "fixture",
+      "slot": "09:20",
+      "observed_at": "2026-10-29T09:20:00+09:00",
+      "received_at": "2026-10-29T09:20:00+09:00",
+      "api_id": "ka00198",
+      "qry_tp": "1",
+      "status": "success",
+      "stocks": [
+        {
+          "stk_cd": "000001",
+          "rank": 1
+        },
+        {
+          "stk_cd": "000002",
+          "rank": 2
+        },
+        {
+          "stk_cd": "000003",
+          "rank": 3
+        },
+        {
+          "stk_cd": "000004",
+          "rank": 4
+        },
+        {
+          "stk_cd": "000005",
+          "rank": 5
+        },
+        {
+          "stk_cd": "000006",
+          "rank": 6
+        },
+        {
+          "stk_cd": "000007",
+          "rank": 7
+        },
+        {
+          "stk_cd": "000008",
+          "rank": 8
+        },
+        {
+          "stk_cd": "000009",
+          "rank": 9
+        },
+        {
+          "stk_cd": "000010",
+          "rank": 10
+        },
+        {
+          "stk_cd": "000011",
+          "rank": 11
+        },
+        {
+          "stk_cd": "000012",
+          "rank": 12
+        },
+        {
+          "stk_cd": "000013",
+          "rank": 13
+        },
+        {
+          "stk_cd": "000014",
+          "rank": 14
+        },
+        {
+          "stk_cd": "000015",
+          "rank": 15
+        },
+        {
+          "stk_cd": "000016",
+          "rank": 16
+        },
+        {
+          "stk_cd": "000017",
+          "rank": 17
+        },
+        {
+          "stk_cd": "000018",
+          "rank": 18
+        },
+        {
+          "stk_cd": "000019",
+          "rank": 19
+        },
+        {
+          "stk_cd": "000020",
+          "rank": 20
+        }
+      ]
+    },
+    {
+      "environment": "mock",
+      "market": "KRX",
+      "source_kind": "fixture",
+      "slot": "09:30",
+      "observed_at": "2026-10-29T09:30:00+09:00",
+      "received_at": "2026-10-29T09:30:00+09:00",
+      "api_id": "ka00198",
+      "qry_tp": "1",
+      "status": "success",
+      "stocks": [
+        {
+          "stk_cd": "000006",
+          "rank": 1
+        },
+        {
+          "stk_cd": "000007",
+          "rank": 2
+        },
+        {
+          "stk_cd": "000008",
+          "rank": 3
+        },
+        {
+          "stk_cd": "000009",
+          "rank": 4
+        },
+        {
+          "stk_cd": "000001",
+          "rank": 5
+        },
+        {
+          "stk_cd": "000002",
+          "rank": 6
+        },
+        {
+          "stk_cd": "000003",
+          "rank": 7
+        },
+        {
+          "stk_cd": "000004",
+          "rank": 8
+        },
+        {
+          "stk_cd": "000005",
+          "rank": 9
+        },
+        {
+          "stk_cd": "000010",
+          "rank": 10
+        },
+        {
+          "stk_cd": "000011",
+          "rank": 11
+        },
+        {
+          "stk_cd": "000012",
+          "rank": 12
+        },
+        {
+          "stk_cd": "000013",
+          "rank": 13
+        },
+        {
+          "stk_cd": "000014",
+          "rank": 14
+        },
+        {
+          "stk_cd": "000015",
+          "rank": 15
+        },
+        {
+          "stk_cd": "000016",
+          "rank": 16
+        },
+        {
+          "stk_cd": "000017",
+          "rank": 17
+        },
+        {
+          "stk_cd": "000018",
+          "rank": 18
+        },
+        {
+          "stk_cd": "000019",
+          "rank": 19
+        },
+        {
+          "stk_cd": "000020",
+          "rank": 20
+        }
+      ]
+    },
+    {
+      "environment": "mock",
+      "market": "KRX",
+      "source_kind": "fixture",
+      "slot": "09:40",
+      "observed_at": "2026-10-29T09:40:00+09:00",
+      "received_at": "2026-10-29T09:40:00+09:00",
+      "api_id": "ka00198",
+      "qry_tp": "1",
+      "status": "success",
+      "stocks": [
+        {
+          "stk_cd": "000002",
+          "rank": 1
+        },
+        {
+          "stk_cd": "000003",
+          "rank": 2
+        },
+        {
+          "stk_cd": "000004",
+          "rank": 3
+        },
+        {
+          "stk_cd": "000005",
+          "rank": 4
+        },
+        {
+          "stk_cd": "000006",
+          "rank": 5
+        },
+        {
+          "stk_cd": "000001",
+          "rank": 6
+        },
+        {
+          "stk_cd": "000007",
+          "rank": 7
+        },
+        {
+          "stk_cd": "000008",
+          "rank": 8
+        },
+        {
+          "stk_cd": "000009",
+          "rank": 9
+        },
+        {
+          "stk_cd": "000010",
+          "rank": 10
+        },
+        {
+          "stk_cd": "000011",
+          "rank": 11
+        },
+        {
+          "stk_cd": "000012",
+          "rank": 12
+        },
+        {
+          "stk_cd": "000013",
+          "rank": 13
+        },
+        {
+          "stk_cd": "000014",
+          "rank": 14
+        },
+        {
+          "stk_cd": "000015",
+          "rank": 15
+        },
+        {
+          "stk_cd": "000016",
+          "rank": 16
+        },
+        {
+          "stk_cd": "000017",
+          "rank": 17
+        },
+        {
+          "stk_cd": "000018",
+          "rank": 18
+        },
+        {
+          "stk_cd": "000019",
+          "rank": 19
+        },
+        {
+          "stk_cd": "000020",
+          "rank": 20
+        }
+      ]
+    },
+    {
+      "environment": "mock",
+      "market": "KRX",
+      "source_kind": "fixture",
+      "slot": "09:50",
+      "observed_at": "2026-10-29T09:50:00+09:00",
+      "received_at": "2026-10-29T09:50:00+09:00",
+      "api_id": "ka00198",
+      "qry_tp": "1",
+      "status": "success",
+      "stocks": [
+        {
+          "stk_cd": "000007",
+          "rank": 1
+        },
+        {
+          "stk_cd": "000008",
+          "rank": 2
+        },
+        {
+          "stk_cd": "000009",
+          "rank": 3
+        },
+        {
+          "stk_cd": "000001",
+          "rank": 4
+        },
+        {
+          "stk_cd": "000002",
+          "rank": 5
+        },
+        {
+          "stk_cd": "000003",
+          "rank": 6
+        },
+        {
+          "stk_cd": "000004",
+          "rank": 7
+        },
+        {
+          "stk_cd": "000005",
+          "rank": 8
+        },
+        {
+          "stk_cd": "000006",
+          "rank": 9
+        },
+        {
+          "stk_cd": "000010",
+          "rank": 10
+        },
+        {
+          "stk_cd": "000011",
+          "rank": 11
+        },
+        {
+          "stk_cd": "000012",
+          "rank": 12
+        },
+        {
+          "stk_cd": "000013",
+          "rank": 13
+        },
+        {
+          "stk_cd": "000014",
+          "rank": 14
+        },
+        {
+          "stk_cd": "000015",
+          "rank": 15
+        },
+        {
+          "stk_cd": "000016",
+          "rank": 16
+        },
+        {
+          "stk_cd": "000017",
+          "rank": 17
+        },
+        {
+          "stk_cd": "000018",
+          "rank": 18
+        },
+        {
+          "stk_cd": "000019",
+          "rank": 19
+        },
+        {
+          "stk_cd": "000020",
+          "rank": 20
+        }
+      ]
+    }
+  ],
+  "securities": {
+    "000001": {
+      "sectors": [
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "name": "반도체",
+          "basis": "synthetic_classification",
+          "observed_at": "2026-10-29T09:20:00+09:00",
+          "received_at": "2026-10-29T09:20:00+09:00"
+        }
+      ],
+      "price": [
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "5000",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:20:00+09:00",
+          "received_at": "2026-10-29T09:20:00+09:00",
+          "unit": "KRW"
+        },
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "10000",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:50:00+09:00",
+          "received_at": "2026-10-29T09:50:00+09:00",
+          "unit": "KRW"
+        }
+      ],
+      "turnover": [
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "90000000000",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:20:00+09:00",
+          "received_at": "2026-10-29T09:20:00+09:00",
+          "unit": "KRW",
+          "period": "intraday_cumulative"
+        },
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "180000000000",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:50:00+09:00",
+          "received_at": "2026-10-29T09:50:00+09:00",
+          "unit": "KRW",
+          "period": "intraday_cumulative"
+        }
+      ],
+      "market_cap": [
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "1000000000000",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:50:00+09:00",
+          "received_at": "2026-10-29T09:50:00+09:00",
+          "unit": "KRW"
+        }
+      ],
+      "liquidity": [
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "100000000",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:50:00+09:00",
+          "received_at": "2026-10-29T09:50:00+09:00",
+          "unit": "KRW"
+        }
+      ],
+      "change_pct": [
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "7.0",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:50:00+09:00",
+          "received_at": "2026-10-29T09:50:00+09:00",
+          "unit": "percent"
+        }
+      ],
+      "names": [
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "가상반도체1호",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:50:00+09:00",
+          "received_at": "2026-10-29T09:50:00+09:00"
+        }
+      ]
+    },
+    "000002": {
+      "sectors": [
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "name": "반도체",
+          "basis": "synthetic_classification",
+          "observed_at": "2026-10-29T09:20:00+09:00",
+          "received_at": "2026-10-29T09:20:00+09:00"
+        }
+      ],
+      "price": [
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "5500",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:20:00+09:00",
+          "received_at": "2026-10-29T09:20:00+09:00",
+          "unit": "KRW"
+        },
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "11000",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:50:00+09:00",
+          "received_at": "2026-10-29T09:50:00+09:00",
+          "unit": "KRW"
+        }
+      ],
+      "turnover": [
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "85500000000",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:20:00+09:00",
+          "received_at": "2026-10-29T09:20:00+09:00",
+          "unit": "KRW",
+          "period": "intraday_cumulative"
+        },
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "171000000000",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:50:00+09:00",
+          "received_at": "2026-10-29T09:50:00+09:00",
+          "unit": "KRW",
+          "period": "intraday_cumulative"
+        }
+      ],
+      "market_cap": [
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "1000000000000",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:50:00+09:00",
+          "received_at": "2026-10-29T09:50:00+09:00",
+          "unit": "KRW"
+        }
+      ],
+      "liquidity": [
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "100000000",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:50:00+09:00",
+          "received_at": "2026-10-29T09:50:00+09:00",
+          "unit": "KRW"
+        }
+      ],
+      "change_pct": [
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "6.5",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:50:00+09:00",
+          "received_at": "2026-10-29T09:50:00+09:00",
+          "unit": "percent"
+        }
+      ],
+      "names": [
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "가상반도체2호",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:50:00+09:00",
+          "received_at": "2026-10-29T09:50:00+09:00"
+        }
+      ]
+    },
+    "000003": {
+      "sectors": [
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "name": "반도체",
+          "basis": "synthetic_classification",
+          "observed_at": "2026-10-29T09:20:00+09:00",
+          "received_at": "2026-10-29T09:20:00+09:00"
+        }
+      ],
+      "price": [
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "6000",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:20:00+09:00",
+          "received_at": "2026-10-29T09:20:00+09:00",
+          "unit": "KRW"
+        },
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "12000",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:50:00+09:00",
+          "received_at": "2026-10-29T09:50:00+09:00",
+          "unit": "KRW"
+        }
+      ],
+      "turnover": [
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "81000000000",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:20:00+09:00",
+          "received_at": "2026-10-29T09:20:00+09:00",
+          "unit": "KRW",
+          "period": "intraday_cumulative"
+        },
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "162000000000",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:50:00+09:00",
+          "received_at": "2026-10-29T09:50:00+09:00",
+          "unit": "KRW",
+          "period": "intraday_cumulative"
+        }
+      ],
+      "market_cap": [
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "1000000000000",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:50:00+09:00",
+          "received_at": "2026-10-29T09:50:00+09:00",
+          "unit": "KRW"
+        }
+      ],
+      "liquidity": [
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "100000000",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:50:00+09:00",
+          "received_at": "2026-10-29T09:50:00+09:00",
+          "unit": "KRW"
+        }
+      ],
+      "change_pct": [
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "6.0",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:50:00+09:00",
+          "received_at": "2026-10-29T09:50:00+09:00",
+          "unit": "percent"
+        }
+      ],
+      "names": [
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "가상반도체3호",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:50:00+09:00",
+          "received_at": "2026-10-29T09:50:00+09:00"
+        }
+      ]
+    },
+    "000004": {
+      "sectors": [
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "name": "원전",
+          "basis": "synthetic_classification",
+          "observed_at": "2026-10-29T09:20:00+09:00",
+          "received_at": "2026-10-29T09:20:00+09:00"
+        }
+      ],
+      "price": [
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "6500",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:20:00+09:00",
+          "received_at": "2026-10-29T09:20:00+09:00",
+          "unit": "KRW"
+        },
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "13000",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:50:00+09:00",
+          "received_at": "2026-10-29T09:50:00+09:00",
+          "unit": "KRW"
+        }
+      ],
+      "turnover": [
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "76500000000",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:20:00+09:00",
+          "received_at": "2026-10-29T09:20:00+09:00",
+          "unit": "KRW",
+          "period": "intraday_cumulative"
+        },
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "153000000000",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:50:00+09:00",
+          "received_at": "2026-10-29T09:50:00+09:00",
+          "unit": "KRW",
+          "period": "intraday_cumulative"
+        }
+      ],
+      "market_cap": [
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "1000000000000",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:50:00+09:00",
+          "received_at": "2026-10-29T09:50:00+09:00",
+          "unit": "KRW"
+        }
+      ],
+      "liquidity": [
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "100000000",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:50:00+09:00",
+          "received_at": "2026-10-29T09:50:00+09:00",
+          "unit": "KRW"
+        }
+      ],
+      "change_pct": [
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "5.5",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:50:00+09:00",
+          "received_at": "2026-10-29T09:50:00+09:00",
+          "unit": "percent"
+        }
+      ],
+      "names": [
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "가상원전1호",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:50:00+09:00",
+          "received_at": "2026-10-29T09:50:00+09:00"
+        }
+      ]
+    },
+    "000005": {
+      "sectors": [
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "name": "원전",
+          "basis": "synthetic_classification",
+          "observed_at": "2026-10-29T09:20:00+09:00",
+          "received_at": "2026-10-29T09:20:00+09:00"
+        }
+      ],
+      "price": [
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "7000",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:20:00+09:00",
+          "received_at": "2026-10-29T09:20:00+09:00",
+          "unit": "KRW"
+        },
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "14000",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:50:00+09:00",
+          "received_at": "2026-10-29T09:50:00+09:00",
+          "unit": "KRW"
+        }
+      ],
+      "turnover": [
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "72000000000",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:20:00+09:00",
+          "received_at": "2026-10-29T09:20:00+09:00",
+          "unit": "KRW",
+          "period": "intraday_cumulative"
+        },
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "144000000000",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:50:00+09:00",
+          "received_at": "2026-10-29T09:50:00+09:00",
+          "unit": "KRW",
+          "period": "intraday_cumulative"
+        }
+      ],
+      "market_cap": [
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "1000000000000",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:50:00+09:00",
+          "received_at": "2026-10-29T09:50:00+09:00",
+          "unit": "KRW"
+        }
+      ],
+      "liquidity": [
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "100000000",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:50:00+09:00",
+          "received_at": "2026-10-29T09:50:00+09:00",
+          "unit": "KRW"
+        }
+      ],
+      "change_pct": [
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "5.0",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:50:00+09:00",
+          "received_at": "2026-10-29T09:50:00+09:00",
+          "unit": "percent"
+        }
+      ],
+      "names": [
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "가상원전2호",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:50:00+09:00",
+          "received_at": "2026-10-29T09:50:00+09:00"
+        }
+      ]
+    },
+    "000006": {
+      "sectors": [
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "name": "원전",
+          "basis": "synthetic_classification",
+          "observed_at": "2026-10-29T09:20:00+09:00",
+          "received_at": "2026-10-29T09:20:00+09:00"
+        }
+      ],
+      "price": [
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "7500",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:20:00+09:00",
+          "received_at": "2026-10-29T09:20:00+09:00",
+          "unit": "KRW"
+        },
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "15000",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:50:00+09:00",
+          "received_at": "2026-10-29T09:50:00+09:00",
+          "unit": "KRW"
+        }
+      ],
+      "turnover": [
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "67500000000",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:20:00+09:00",
+          "received_at": "2026-10-29T09:20:00+09:00",
+          "unit": "KRW",
+          "period": "intraday_cumulative"
+        },
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "135000000000",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:50:00+09:00",
+          "received_at": "2026-10-29T09:50:00+09:00",
+          "unit": "KRW",
+          "period": "intraday_cumulative"
+        }
+      ],
+      "market_cap": [
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "1000000000000",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:50:00+09:00",
+          "received_at": "2026-10-29T09:50:00+09:00",
+          "unit": "KRW"
+        }
+      ],
+      "liquidity": [
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "100000000",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:50:00+09:00",
+          "received_at": "2026-10-29T09:50:00+09:00",
+          "unit": "KRW"
+        }
+      ],
+      "change_pct": [
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "4.5",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:50:00+09:00",
+          "received_at": "2026-10-29T09:50:00+09:00",
+          "unit": "percent"
+        }
+      ],
+      "names": [
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "가상원전3호",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:50:00+09:00",
+          "received_at": "2026-10-29T09:50:00+09:00"
+        }
+      ]
+    },
+    "000007": {
+      "sectors": [
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "name": "조선",
+          "basis": "synthetic_classification",
+          "observed_at": "2026-10-29T09:20:00+09:00",
+          "received_at": "2026-10-29T09:20:00+09:00"
+        }
+      ],
+      "price": [
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "8000",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:20:00+09:00",
+          "received_at": "2026-10-29T09:20:00+09:00",
+          "unit": "KRW"
+        },
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "16000",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:50:00+09:00",
+          "received_at": "2026-10-29T09:50:00+09:00",
+          "unit": "KRW"
+        }
+      ],
+      "turnover": [
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "63000000000",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:20:00+09:00",
+          "received_at": "2026-10-29T09:20:00+09:00",
+          "unit": "KRW",
+          "period": "intraday_cumulative"
+        },
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "126000000000",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:50:00+09:00",
+          "received_at": "2026-10-29T09:50:00+09:00",
+          "unit": "KRW",
+          "period": "intraday_cumulative"
+        }
+      ],
+      "market_cap": [
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "1000000000000",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:50:00+09:00",
+          "received_at": "2026-10-29T09:50:00+09:00",
+          "unit": "KRW"
+        }
+      ],
+      "liquidity": [
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "100000000",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:50:00+09:00",
+          "received_at": "2026-10-29T09:50:00+09:00",
+          "unit": "KRW"
+        }
+      ],
+      "change_pct": [
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "4.0",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:50:00+09:00",
+          "received_at": "2026-10-29T09:50:00+09:00",
+          "unit": "percent"
+        }
+      ],
+      "names": [
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "가상조선1호",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:50:00+09:00",
+          "received_at": "2026-10-29T09:50:00+09:00"
+        }
+      ]
+    },
+    "000008": {
+      "sectors": [
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "name": "조선",
+          "basis": "synthetic_classification",
+          "observed_at": "2026-10-29T09:20:00+09:00",
+          "received_at": "2026-10-29T09:20:00+09:00"
+        }
+      ],
+      "price": [
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "8500",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:20:00+09:00",
+          "received_at": "2026-10-29T09:20:00+09:00",
+          "unit": "KRW"
+        },
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "17000",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:50:00+09:00",
+          "received_at": "2026-10-29T09:50:00+09:00",
+          "unit": "KRW"
+        }
+      ],
+      "turnover": [
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "58500000000",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:20:00+09:00",
+          "received_at": "2026-10-29T09:20:00+09:00",
+          "unit": "KRW",
+          "period": "intraday_cumulative"
+        },
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "117000000000",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:50:00+09:00",
+          "received_at": "2026-10-29T09:50:00+09:00",
+          "unit": "KRW",
+          "period": "intraday_cumulative"
+        }
+      ],
+      "market_cap": [
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "1000000000000",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:50:00+09:00",
+          "received_at": "2026-10-29T09:50:00+09:00",
+          "unit": "KRW"
+        }
+      ],
+      "liquidity": [
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "100000000",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:50:00+09:00",
+          "received_at": "2026-10-29T09:50:00+09:00",
+          "unit": "KRW"
+        }
+      ],
+      "change_pct": [
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "3.5",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:50:00+09:00",
+          "received_at": "2026-10-29T09:50:00+09:00",
+          "unit": "percent"
+        }
+      ],
+      "names": [
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "가상조선2호",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:50:00+09:00",
+          "received_at": "2026-10-29T09:50:00+09:00"
+        }
+      ]
+    },
+    "000009": {
+      "sectors": [
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "name": "조선",
+          "basis": "synthetic_classification",
+          "observed_at": "2026-10-29T09:20:00+09:00",
+          "received_at": "2026-10-29T09:20:00+09:00"
+        }
+      ],
+      "price": [
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "9000",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:20:00+09:00",
+          "received_at": "2026-10-29T09:20:00+09:00",
+          "unit": "KRW"
+        },
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "18000",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:50:00+09:00",
+          "received_at": "2026-10-29T09:50:00+09:00",
+          "unit": "KRW"
+        }
+      ],
+      "turnover": [
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "54000000000",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:20:00+09:00",
+          "received_at": "2026-10-29T09:20:00+09:00",
+          "unit": "KRW",
+          "period": "intraday_cumulative"
+        },
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "108000000000",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:50:00+09:00",
+          "received_at": "2026-10-29T09:50:00+09:00",
+          "unit": "KRW",
+          "period": "intraday_cumulative"
+        }
+      ],
+      "market_cap": [
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "1000000000000",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:50:00+09:00",
+          "received_at": "2026-10-29T09:50:00+09:00",
+          "unit": "KRW"
+        }
+      ],
+      "liquidity": [
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "100000000",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:50:00+09:00",
+          "received_at": "2026-10-29T09:50:00+09:00",
+          "unit": "KRW"
+        }
+      ],
+      "change_pct": [
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "3.0",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:50:00+09:00",
+          "received_at": "2026-10-29T09:50:00+09:00",
+          "unit": "percent"
+        }
+      ],
+      "names": [
+        {
+          "environment": "mock",
+          "market": "KRX",
+          "source_kind": "fixture",
+          "value": "가상조선3호",
+          "verified": true,
+          "basis": "synthetic_verified_fixture",
+          "observed_at": "2026-10-29T09:50:00+09:00",
+          "received_at": "2026-10-29T09:50:00+09:00"
+        }
+      ]
+    }
+  }
+}

@@ -1,5 +1,8 @@
 # Step 7-C5-B — 아르비스 Telegram 오전 브리핑
 
+Step 7-C6의 섹터별 간결 문자와 합성 dry-run은 [AM_SECTOR_BRIEFING.md](AM_SECTOR_BRIEFING.md)를 따른다.
+기존 문자 전송과 예약 중복 방지는 유지하며 OpenAI TTS·Telegram 음성 전송은 차단한다.
+
 ## 범위
 
 `kiwoom_collector.telegram_briefing`은 독립 수동 알림 모듈이다. 기본 동작은 dry-run이며 `--send`가 있어야 Telegram 전송 경로에 진입한다. 실제 최초 전송은 사용자 승인 후에만 수행한다. 이번 구현·테스트에서는 실제 메시지를 전송하지 않는다. 운영 DB, 수집기, 스케줄러, D0 저장 기능을 읽거나 변경하지 않는다. 자동 스케줄·자동 재시도·운영 데이터 연결은 구현하지 않았다.

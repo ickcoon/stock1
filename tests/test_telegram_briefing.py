@@ -179,6 +179,7 @@ class TelegramBriefingTests(unittest.TestCase):
                 self.assertNotIn(value,json.dumps(caught.exception.diagnostics))
         self.assertEqual(self.session.post.call_count,len(cases))
 
+    @patch('kiwoom_collector.media_policy.require_legacy_media', new=lambda: None)
     def test_voice_upload_timeout_is_unknown_persisted_and_never_retried(self):
         from dataclasses import replace
         from kiwoom_collector import voice_briefing as vb
@@ -231,6 +232,7 @@ class TelegramBriefingTests(unittest.TestCase):
             tg.api_call(self.session,self.config,'sendMessage',text='synthetic')
         self.assertEqual(caught.exception.diagnostics['stage'],'recipient_validation')
 
+    @patch('kiwoom_collector.media_policy.require_legacy_media', new=lambda: None)
     def test_sendaudio_transport_uses_unchanged_tls_and_timeout_contract(self):
         from kiwoom_collector import voice_briefing as vb
         audio=vb.SilenceFixtureTTS().synthesize(vb.build_script(self.report)).data
