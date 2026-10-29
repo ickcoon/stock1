@@ -69,20 +69,25 @@ def analyze(document, *, generated_at=None):
         if cap is None: missing.append('market_cap_unverified')
         elif cap <= 3000 * EOK: missing.append('market_cap_not_above_3000_eok')
         if turnover is None: missing.append('intraday_turnover_unverified')
-        elif turnover < 500 * EOK: missing.append('turnover_below_500_eok')
         if change is None: missing.append('change_pct_unverified')
         elif change <= 0: missing.append('positive_change_unverified')
         current = row['rank_history'][-1]['rank'] if row['rank_history'] else None
         if row['top5_appearances'] < 2 or current is None: missing.append('repeated_attention_insufficient')
-        status = 'held' if missing else 'priority' if turnover >= 1000 * EOK else 'preliminary'
+        status = 'held' if missing else 'priority'
         candidate = dict(stock_code=code, name=metrics['names']['value'] if metrics['names'] else None,
                          sector=sectors[0] if len(sectors) == 1 else None,
                          status=status, missing_evidence=missing, metrics=metrics,
                          top5_appearances=row['top5_appearances'], top20_appearances=row['top20_appearances'],
-                         latest_rank=current, rank_change=row['rank_change'])
+                         latest_rank=current, rank_change=row['rank_change'],
+                         turnover_comparison=turnover_comparison(document, code, cutoff, metrics['turnover']))
         candidates.append(candidate)
         if candidate['sector']:
             groups.setdefault(candidate['sector'], []).append(candidate)
+
+    amounts = sorted({Decimal(c['metrics']['turnover']['value']) for c in candidates if c['metrics']['turnover']}, reverse=True)
+    for candidate in candidates:
+        metric = candidate['metrics']['turnover']
+        candidate['turnover_comparison']['relative_rank'] = amounts.index(Decimal(metric['value']))+1 if metric else None
 
     def stock_order(c):
         return (c['status'] != 'priority', -c['top5_appearances'], -c['top20_appearances'],
@@ -101,7 +106,7 @@ def analyze(document, *, generated_at=None):
                         rising_stocks=len(eligible),
                         cumulative_turnover_won=str(sum((Decimal(c['metrics']['turnover']['value']) for c in eligible), Decimal(0))),
                         mean_change_pct=str(sum((Decimal(c['metrics']['change_pct']['value']) for c in eligible), Decimal(0))/len(eligible)))
-        sectors.append(dict(name=name, status='priority' if sum(c['status'] == 'priority' for c in eligible) >= 2 else 'preliminary',
+        sectors.append(dict(name=name, status='priority',
                             evidence=evidence, leaders=eligible[:3]))
     sectors.sort(key=lambda s: (s['status'] != 'priority', -s['evidence']['top20_appearances'],
                                 -s['evidence']['top5_appearances'], -s['evidence']['rising_stocks'],
@@ -112,14 +117,40 @@ def analyze(document, *, generated_at=None):
     result = dict(schema_version=SCHEMA, selection_type='AM_MOMENTUM', source_kind='fixture', environment=base['environment'], market=base['market'],
                   trade_date=base['trade_date'], selection_cutoff_at=base['selection_cutoff_at'],
                   candidate_confirmed=False, d0_storage_allowed=False, completeness=base['completeness'],
-                  policy=dict(version='7-C6-v1', market_cap_exclusive_min_won=str(3000*EOK),
-                              priority_turnover_min_won=str(1000*EOK), preliminary_turnover_min_won=str(500*EOK),
+                  policy=dict(version='7-C6-relative-turnover-v2', market_cap_exclusive_min_won=str(3000*EOK),
+                              absolute_am_turnover_min_won=None, turnover_evaluation='same_cutoff_relative_rank_and_verified_growth',
                               turnover_period='intraday_cumulative', closing_turnover_requirement_applied=False,
                               minimum_top5_hits=2, minimum_sector_companions=2, weighted_score=False,
                               ambiguous_sector='hold', stale_metrics='hold', validated_optimal_strategy=False),
                   sectors=sectors[:3], held_sectors=held_sectors, candidates=candidates, analysis=base,
                   input_fixture=json.loads(am.canonical(document)))
     result['evaluation_reference'] = hashlib.sha256(am.canonical(result).encode()).hexdigest()
+    return result
+
+
+def turnover_comparison(document, code, cutoff, current):
+    result = dict(relative_rank=None, increase_won=None, increase_per_second=None,
+                  previous_observed_at=None, growth_status='미확인')
+    if current is None:
+        return result
+    previous = []
+    for item in document.get('securities', {}).get(code, {}).get('turnover', []):
+        observed, received = am.timestamp(item.get('observed_at')), am.timestamp(item.get('received_at'))
+        value = am.number(item.get('value'))
+        if (observed and received and observed.date() == cutoff.date() and observed <= received <= cutoff
+                and observed < am.instant(current['observed_at']) and item.get('verified') is True
+                and item.get('source_kind') == document['source_kind']
+                and item.get('environment') == document['environment'] and item.get('market') == document['market']
+                and item.get('unit') == 'KRW' and item.get('period') == 'intraday_cumulative'
+                and value is not None and value >= 0):
+            previous.append((observed, value))
+    if previous:
+        observed, value = max(previous)
+        delta = Decimal(current['value'])-value
+        seconds = Decimal(str((am.instant(current['observed_at'])-observed).total_seconds()))
+        if delta >= 0:
+            result.update(increase_won=format(delta, 'f'), increase_per_second=format(delta/seconds, 'f'),
+                          previous_observed_at=observed.isoformat(), growth_status='검증됨')
     return result
 
 
@@ -151,8 +182,7 @@ def format_telegram(report):
     if not report['sectors']:
         lines.append('근거 부족으로 섹터와 주도주 순위를 보류합니다.')
     for sector in report['sectors']:
-        qualifier = ' 예비 순위' if sector['status'] == 'preliminary' else ''
-        lines += ['', f"{sector['rank']}위 {sector['name']}.{qualifier + '.' if qualifier else ''}"]
+        lines += ['', f"{sector['rank']}위 {sector['name']}."]
         for index, candidate in enumerate(sector['leaders'], 1):
             change = candidate['metrics']['change_pct']
             turnover = candidate['metrics']['turnover']
@@ -166,8 +196,7 @@ def format_telegram(report):
             else:
                 turnover_text = '미확인'
             name = candidate['name'] or ('종목명 미확인 ' + candidate['stock_code'])
-            preliminary = ' 예비 후보.' if candidate['status'] == 'preliminary' else ''
-            lines.append(f'{index}등 {name}, {change_text}, 누적 거래대금 {turnover_text}.{preliminary}')
+            lines.append(f'{index}등 {name}, {change_text}, 누적 거래대금 {turnover_text}.')
         if len(sector['leaders']) < 3:
             lines.append('추가 후보는 근거 부족으로 보류합니다.')
     if 0 < len(report['sectors']) < 3:

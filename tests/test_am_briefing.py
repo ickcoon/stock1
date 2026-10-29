@@ -104,19 +104,39 @@ class AMBriefingTests(unittest.TestCase):
             self.doc['securities']['000001']['market_cap'][0]['value'] = amount
             self.assertEqual(self.candidate(self.analyze())['status'], status)
 
-    def test_intraday_turnover_boundaries(self):
-        for amount, status in [('49999999999', 'held'), ('50000000000', 'preliminary'),
-                               ('99999999999', 'preliminary'), ('100000000000', 'priority')]:
+    def test_intraday_turnover_has_no_absolute_floor(self):
+        for amount, status in [('0', 'priority'), ('100000000', 'priority'), ('49999999999', 'priority'),
+                               ('50000000000', 'priority'), ('99999999999', 'priority'), ('100000000000', 'priority')]:
             self.doc['securities']['000001']['turnover'][-1]['value'] = amount
             self.assertEqual(self.candidate(self.analyze())['status'], status)
 
-    def test_preliminary_sector_explicitly_labelled(self):
+    def test_small_turnover_does_not_make_preliminary_sector(self):
         for code in ['000001', '000002', '000003']:
             self.doc['securities'][code]['turnover'][-1]['value'] = '75000000000'
         report = self.analyze()
-        self.assertEqual(next(s for s in report['sectors'] if s['name'] == '반도체')['status'], 'preliminary')
-        self.assertIn('예비 순위', b.format_telegram(report))
-        self.assertIn('예비 후보', b.format_telegram(report))
+        self.assertEqual(next(s for s in report['sectors'] if s['name'] == '반도체')['status'], 'priority')
+        self.assertNotIn('예비 순위', b.format_telegram(report))
+        self.assertNotIn('예비 후보', b.format_telegram(report))
+
+    def test_turnover_relative_rank_and_measured_growth(self):
+        report = self.analyze()
+        comparison = self.candidate(report)['turnover_comparison']
+        self.assertEqual(comparison['relative_rank'], 1)
+        self.assertEqual(comparison['increase_won'], '90000000000')
+        self.assertEqual(comparison['increase_per_second'], '50000000')
+        self.assertEqual(comparison['growth_status'], '검증됨')
+        self.doc['securities']['000001']['turnover'] = self.doc['securities']['000001']['turnover'][-1:]
+        candidate = self.candidate(self.analyze())
+        self.assertEqual(candidate['status'], 'priority')
+        self.assertIsNone(candidate['turnover_comparison']['increase_per_second'])
+        self.assertEqual(candidate['turnover_comparison']['growth_status'], '미확인')
+
+    def test_unverified_previous_turnover_never_creates_growth(self):
+        for mutation in [{'verified': False}, {'period': 'daily_close'}, {'observed_at': '2026-10-28T09:20:00+09:00'},
+                         {'value': '999999999999'}]:
+            self.doc = deepcopy(FIXTURE)
+            self.doc['securities']['000001']['turnover'][0].update(mutation)
+            self.assertIsNone(self.candidate(self.analyze())['turnover_comparison']['increase_per_second'])
 
     def test_closing_or_unspecified_turnover_never_substitutes(self):
         for period in ['daily_close', None]:
