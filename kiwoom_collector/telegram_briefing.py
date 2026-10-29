@@ -8,9 +8,12 @@ import json
 import os
 from pathlib import Path
 import re
+import socket
+import ssl
 
 import requests
 from requests.adapters import HTTPAdapter
+from urllib3 import exceptions as ue
 
 from . import am_momentum as am
 
@@ -32,6 +35,58 @@ REASONS = {'top5_repeated': 'TOP5 반복', 'top20_persistent': 'TOP20 지속',
 
 class BriefingError(ValueError):
     """Only static reason codes may leave this module on failure."""
+
+
+TELEGRAM_ERRORS = frozenset((
+    'telegram_http_failed', 'telegram_api_failed', 'telegram_response_invalid',
+    'telegram_recipient_mismatch', 'telegram_transport_failed', 'telegram_dns_failed',
+    'telegram_connection_failed', 'telegram_tls_failed', 'telegram_certificate_failed',
+    'telegram_connect_timeout', 'telegram_read_timeout', 'telegram_timeout',
+))
+
+
+class TelegramRequestError(BriefingError):
+    """Public enums/numbers only; no URL, recipient, description or request data."""
+    def __init__(self, reason, method, stage, *, http_status=None, api_error_code=None,
+                 exception_type='ResponseValidationError'):
+        super().__init__(reason)
+        self.diagnostics = dict(method=method, stage=stage, http_status=http_status,
+                                api_error_code=api_error_code, exception_type=exception_type)
+
+
+def telegram_transport_error(error, method, stage, http_status):
+    pending, chain = [error], []
+    while pending and len(chain) < 24:
+        item = pending.pop()
+        if not isinstance(item, BaseException) or any(item is seen for seen in chain):
+            continue
+        chain.append(item)
+        pending.extend((item.__cause__, item.__context__, getattr(item, 'reason', None)))
+        pending.extend(arg for arg in item.args if isinstance(arg, BaseException))
+    categories = (
+        (ssl.SSLCertVerificationError,'telegram_certificate_failed','SSLCertVerificationError'),
+        (socket.gaierror,'telegram_dns_failed','gaierror'),
+        (ue.NameResolutionError,'telegram_dns_failed','NameResolutionError'),
+        (requests.exceptions.SSLError,'telegram_tls_failed','SSLError'),
+        (ssl.SSLError,'telegram_tls_failed','SSLError'),
+        (ue.SSLError,'telegram_tls_failed','SSLError'),
+        (requests.exceptions.ConnectTimeout,'telegram_connect_timeout','ConnectTimeout'),
+        (requests.exceptions.ReadTimeout,'telegram_read_timeout','ReadTimeout'),
+        (ue.ReadTimeoutError,'telegram_read_timeout','ReadTimeoutError'),
+        (ue.NewConnectionError,'telegram_connection_failed','NewConnectionError'),
+        (ue.ConnectTimeoutError,'telegram_connect_timeout','ConnectTimeoutError'),
+        (TimeoutError,'telegram_timeout','TimeoutError'),
+        (requests.exceptions.Timeout,'telegram_timeout','Timeout'),
+        (requests.exceptions.ConnectionError,'telegram_connection_failed','ConnectionError'),
+        (ConnectionError,'telegram_connection_failed','ConnectionError'),
+        (requests.exceptions.RequestException,'telegram_transport_failed','RequestException'),
+        (RuntimeError,'telegram_transport_failed','RuntimeError'),
+    )
+    for kind, reason, label in categories:
+        if any(isinstance(item, kind) for item in chain):
+            return TelegramRequestError(reason,method,stage,http_status=http_status,exception_type=label)
+    return TelegramRequestError('telegram_transport_failed',method,stage,http_status=http_status,
+                                exception_type='UnknownException')
 
 
 def require(condition, code='invalid_report'):
@@ -248,23 +303,46 @@ def api_call(session, config, method, *, text=None, html=None, audio=None):
     else:
         from .voice_briefing import mp3_duration
         mp3_duration(audio)
-        data['caption'] = '아르비스 AI 합성 음성 · 잠정 분석 · 매매 확정 아님'
+        data['caption'] = '아르비스 합성 테스트 데이터 기반 AI 음성 · 잠정 분석 · 매매 확정 아님'
         kwargs['data'] = data
         kwargs['files'] = {('voice' if method == 'sendVoice' else 'audio'): ('arvis-am-briefing.mp3',audio,'audio/mpeg')}
+    stage = 'upload_or_response' if 'files' in kwargs else 'request_response'
+    http_status = None
+    api_error_code = None
     try:
         response = session.post('https://api.telegram.org/bot'+config.token+'/'+method, **kwargs)
-        if response.status_code != 200:
-            raise BriefingError('telegram_http_failed')
-        body = response.json()
+        http_status = response.status_code
+        stage = 'response_json'
+        try:
+            content = getattr(response, 'content', None)
+            if isinstance(content, bytes) and len(content)>16384:
+                raise ValueError('bounded_response')
+            body = response.json()
+        except (ValueError, TypeError):
+            raise TelegramRequestError('telegram_http_failed' if http_status != 200 else 'telegram_response_invalid',
+                                       method,stage,http_status=http_status,exception_type='JSONDecodeError') from None
+        if isinstance(body, dict):
+            code = body.get('error_code')
+            if type(code) is int and code in (400,401,403,404,409,413,429,500,502,503,504):
+                api_error_code = code
+        if http_status != 200:
+            raise TelegramRequestError('telegram_http_failed',method,'http_response',
+                                       http_status=http_status,api_error_code=api_error_code,exception_type='HTTPError')
+        stage = 'api_response'
         require(isinstance(body,dict) and body.get('ok') is True, 'telegram_api_failed')
         result = body.get('result',{})
         require(isinstance(result,dict) and type(result.get('message_id')) is int, 'telegram_response_invalid')
         chat = result.get('chat',{})
+        stage = 'recipient_validation'
         require(isinstance(chat,dict) and chat.get('type') == 'private' and str(chat.get('id')) == config.chat_id, 'telegram_recipient_mismatch')
-    except BriefingError:
+    except TelegramRequestError:
         raise
-    except Exception:
-        raise BriefingError('telegram_transport_failed') from None
+    except BriefingError as error:
+        reason = str(error) if str(error) in TELEGRAM_ERRORS else 'telegram_response_invalid'
+        raise TelegramRequestError(reason,method,stage,http_status=http_status,
+                                   api_error_code=api_error_code) from None
+    except Exception as error:
+        raise telegram_transport_error(error,method,stage,http_status) from None
 
 
 def deliver(report, text, html, config, *, session_factory=None, voice=None, voice_method='sendVoice', voice_only=False):
@@ -279,10 +357,10 @@ def deliver(report, text, html, config, *, session_factory=None, voice=None, voi
     voice_status='not_requested'
     require(voice_method in ('sendVoice','sendAudio'),'invalid_voice_method')
     if voice is not None:
-        from .voice_briefing import validate_audio
+        from .voice_briefing import validate_audio, scan_audio
         require(isinstance(voice,tuple) and len(voice)==2,'invalid_voice_bundle')
         validate_audio(report,*voice)
-        scan(voice[1].data.decode('utf-8',errors='ignore'),(config.token,config.chat_id))
+        scan_audio(voice[1].data,(config.token,config.chat_id))
         if voice[1].is_test:
             require(not voice_only, 'test_audio_not_deliverable')
             voice=None;voice_status='test_audio_text_only'
@@ -322,6 +400,13 @@ def deliver(report, text, html, config, *, session_factory=None, voice=None, voi
             def save():
                 stream.seek(0); json.dump(state,stream); stream.truncate(); stream.flush(); os.fsync(stream.fileno())
             save()  # Persist the reservation before any network call.
+            def call(method, **kwargs):
+                try:
+                    api_call(session,config,method,**kwargs)
+                except TelegramRequestError as error:
+                    state.update(status='failed_or_unknown',reason=str(error),failure=error.diagnostics)
+                    save()  # Preserve safe diagnostics on the exclusive descriptor.
+                    raise
             with (session_factory or requests.Session)() as session:
                 session.trust_env=False
                 session.mount('https://',HTTPAdapter(max_retries=0))
@@ -335,13 +420,13 @@ def deliver(report, text, html, config, *, session_factory=None, voice=None, voi
                     for logger in loggers: logger.disabled=True
                     http.client.HTTPConnection.debuglevel=0
                     if not voice_only:
-                        api_call(session,config,'sendMessage',text=text)
+                        call('sendMessage',text=text)
                         state.update(status='message_sent',message_sent=True); save()
                     if html is not None:
-                        api_call(session,config,'sendDocument',html=html)
+                        call('sendDocument',html=html)
                         state['document_sent']=True
                     if voice is not None:
-                        api_call(session,config,voice_method,audio=voice[1].data)
+                        call(voice_method,audio=voice[1].data)
                         state['voice_sent']=True
                     state['status']='sent'; save()
                 finally:
@@ -349,8 +434,11 @@ def deliver(report, text, html, config, *, session_factory=None, voice=None, voi
                     http.client.HTTPConnection.debuglevel=debug
     except Exception as error:
         # Even an unknown delivery result must retain its reservation to avoid duplicate sends.
-        return dict(status='failed_or_unknown', reason=str(error) if isinstance(error,BriefingError) and str(error) in {'telegram_http_failed','telegram_api_failed','telegram_response_invalid','telegram_recipient_mismatch','telegram_transport_failed'} else 'delivery_failed',
-                    message_sent=state['message_sent'],document_sent=state['document_sent'],voice_sent=state['voice_sent'],candidate_confirmed=False)
+        result = dict(status='failed_or_unknown', reason=str(error) if isinstance(error,BriefingError) and str(error) in TELEGRAM_ERRORS else 'delivery_failed',
+                      message_sent=state['message_sent'],document_sent=state['document_sent'],voice_sent=state['voice_sent'],candidate_confirmed=False)
+        if isinstance(error,TelegramRequestError):
+            result.update(error.diagnostics)
+        return result
     return dict(status='sent',message_sent=state['message_sent'],document_sent=html is not None,voice_sent=state['voice_sent'],voice_status='sent' if state['voice_sent'] else voice_status,candidate_confirmed=False)
 
 

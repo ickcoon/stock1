@@ -107,7 +107,7 @@ class OpenAITTSTests(unittest.TestCase):
     def test_http_errors_are_static_no_raw_response_and_no_retry(self):
         for status, reason in ((400, 'tts_request_rejected'), (401, 'tts_authentication_failed'),
                                (403, 'tts_permission_denied'), (404, 'tts_model_unavailable'),
-                               (429, 'tts_rate_or_quota_limited'), (500, 'tts_api_failed'), (302, 'tts_api_failed')):
+                               (429, 'tts_rate_or_quota_limited'), (500, 'tts_server_error'), (302, 'tts_api_failed')):
             self.response.status_code = status
             with self.assertRaisesRegex(tg.BriefingError, '^'+reason+'$'):
                 self.provider().synthesize(self.script)
@@ -123,6 +123,117 @@ class OpenAITTSTests(unittest.TestCase):
             provider.synthesize(self.script)
         self.assertEqual(self.session.post.call_count, 1)
 
+    def test_transport_types_are_classified_without_exception_messages(self):
+        secret = FAKE_KEY+FAKE_TOKEN+FAKE_CHAT
+        cases = (
+            (ot.requests.exceptions.ConnectionError(ot.socket.gaierror(-2,secret)), 'tts_dns_failed','gaierror'),
+            (ot.requests.exceptions.ConnectionError(ConnectionRefusedError(secret)), 'tts_connection_failed','ConnectionError'),
+            (ot.requests.exceptions.SSLError(ot.ssl.SSLCertVerificationError(1,secret)), 'tts_certificate_failed','SSLCertVerificationError'),
+            (ot.requests.exceptions.SSLError(secret), 'tts_tls_failed','SSLError'),
+            (ot.requests.exceptions.ConnectTimeout(secret), 'tts_connect_timeout','ConnectTimeout'),
+            (ot.requests.exceptions.ReadTimeout(secret), 'tts_read_timeout','ReadTimeout'),
+            (ot.requests.exceptions.ConnectionError(ot.ue.ReadTimeoutError(None,secret,secret)), 'tts_read_timeout','ReadTimeoutError'),
+            (ot.requests.exceptions.ChunkedEncodingError(secret), 'tts_response_stream_failed','ChunkedEncodingError'),
+            (ot.requests.exceptions.Timeout(secret), 'tts_timeout','Timeout'),
+            (RuntimeError(secret), 'tts_transport_failed','RuntimeError'),
+        )
+        for error, reason, label in cases:
+            self.session.post.side_effect = error
+            provider = self.provider()
+            with self.assertRaises(ot.TTSRequestError) as caught:
+                provider.synthesize(self.script)
+            self.assertEqual(str(caught.exception),reason)
+            self.assertEqual(caught.exception.diagnostics,dict(http_status=None,api_error_code=None,exception_type=label,stage='request'))
+            self.assertNotIn(FAKE_KEY,json.dumps(caught.exception.diagnostics))
+            with self.assertRaisesRegex(tg.BriefingError,'tts_already_attempted'):
+                provider.synthesize(self.script)
+        self.assertEqual(self.session.post.call_count,len(cases))
+
+    def test_wrapped_dns_reason_and_connect_timeout_classification(self):
+        dns = ot.ue.NameResolutionError('untrusted.invalid',None,ot.socket.gaierror(-2,FAKE_KEY))
+        wrapped = ot.requests.exceptions.ConnectionError(ot.ue.MaxRetryError(None,'untrusted',dns))
+        self.assertEqual(str(ot.transport_error(wrapped,None)),'tts_dns_failed')
+        timeout = ot.requests.exceptions.ConnectionError(ot.ue.ConnectTimeoutError(FAKE_KEY))
+        self.assertEqual(str(ot.transport_error(timeout,None)),'tts_connect_timeout')
+
+    def test_http_status_and_public_codes_distinguish_quota_rate_and_server(self):
+        cases = ((400,None,'tts_request_rejected'),(401,'invalid_api_key','tts_authentication_failed'),
+                 (403,None,'tts_permission_denied'),(404,'model_not_found','tts_model_unavailable'),
+                 (429,'insufficient_quota','tts_quota_exhausted'),
+                 (429,'credit_balance_exhausted','tts_quota_exhausted'),
+                 (429,'project_spend_limit_exceeded','tts_quota_exhausted'),
+                 (429,'organization_spend_limit_exceeded','tts_quota_exhausted'),
+                 (429,'organization_usage_limit_exceeded','tts_quota_exhausted'),
+                 (429,'rate_limit_exceeded','tts_rate_limited'),(429,'slow_down','tts_rate_limited'),
+                 (429,None,'tts_rate_or_quota_limited'),
+                 (500,'server_error','tts_server_error'),(503,'server_is_overloaded','tts_server_error'))
+        for status, code, reason in cases:
+            self.response.status_code = status
+            body = json.dumps({'error':{'code':code,'message':FAKE_KEY+FAKE_TOKEN+FAKE_CHAT,
+                                       'param':FAKE_KEY},'headers':{'Authorization':FAKE_KEY}}).encode()
+            self.response.iter_content.side_effect = lambda **kwargs: iter((body,))
+            with self.assertRaises(ot.TTSRequestError) as caught:
+                self.provider().synthesize(self.script)
+            self.assertEqual(str(caught.exception),reason)
+            self.assertEqual(caught.exception.diagnostics['http_status'],status)
+            self.assertEqual(caught.exception.diagnostics['api_error_code'],code)
+            self.assertNotIn(FAKE_KEY,json.dumps(caught.exception.diagnostics))
+        self.assertEqual(self.session.post.call_count,len(cases))
+
+    def test_error_body_is_bounded_and_unknown_codes_never_escape(self):
+        for body in (b'not-json',b'x'*16385,json.dumps({'error':{'code':FAKE_KEY,'message':FAKE_TOKEN}}).encode()):
+            self.response.status_code = 429
+            self.response.iter_content.side_effect = lambda **kwargs: iter((body,))
+            with self.assertRaises(ot.TTSRequestError) as caught:
+                self.provider().synthesize(self.script)
+            self.assertIsNone(caught.exception.diagnostics['api_error_code'])
+            self.assertEqual(str(caught.exception),'tts_rate_or_quota_limited')
+        self.response.json.assert_not_called()
+
+    def test_http_200_stream_timeout_and_invalid_format_have_response_status(self):
+        self.response.iter_content.side_effect = ot.requests.exceptions.ConnectionError(ot.ue.ReadTimeoutError(None,FAKE_KEY,FAKE_KEY))
+        with self.assertRaises(ot.TTSRequestError) as caught:
+            self.provider().synthesize(self.script)
+        self.assertEqual(str(caught.exception),'tts_read_timeout')
+        self.assertEqual(caught.exception.diagnostics['http_status'],200)
+        self.response.headers = {'Content-Type':'application/json'}
+        with self.assertRaises(ot.TTSRequestError) as caught:
+            self.provider().synthesize(self.script)
+        self.assertEqual(str(caught.exception),'tts_response_invalid')
+        self.assertEqual(caught.exception.diagnostics['http_status'],200)
+        self.response.headers = {'Content-Type':'audio/mpeg'}
+        self.response.iter_content.side_effect = lambda **kwargs: iter((b'broken mp3',))
+        with self.assertRaises(ot.TTSRequestError) as caught:
+            self.provider().synthesize(self.script)
+        self.assertEqual(str(caught.exception),'invalid_audio')
+        self.assertEqual(caught.exception.diagnostics['exception_type'],'ResponseValidationError')
+
+    def test_cli_and_receipt_record_safe_failure_only_and_block_retry(self):
+        self.session.post.side_effect = ot.requests.exceptions.SSLError(FAKE_KEY+FAKE_TOKEN+FAKE_CHAT)
+        with patch.dict('os.environ',{'OPENAI_API_KEY':FAKE_KEY}),patch.object(ot.requests,'Session',self.factory):
+            code, result = self.cli('--name','tls-failure','--generate','--approve-tts')
+        self.assertEqual(code,1)
+        self.assertEqual(result['reason'],'tts_tls_failed')
+        self.assertEqual(result['exception_type'],'SSLError')
+        receipt_path = tg.REPORTS/'tls-failure.tts-attempt.json'
+        receipt = json.loads(receipt_path.read_text())
+        self.assertEqual(receipt['failure']['exception_type'],'SSLError')
+        self.assertEqual(receipt['status'],'failed_or_unknown')
+        for secret in (FAKE_KEY,FAKE_TOKEN,FAKE_CHAT):
+            self.assertNotIn(secret,json.dumps(result)+json.dumps(receipt))
+        with self.assertRaises(tg.BriefingError):
+            self.generate('tls-failure')
+        self.assertEqual(self.session.post.call_count,1)
+
+    def test_local_postprocessing_valueerror_is_not_misreported_as_network(self):
+        with patch.object(vb,'scan_audio',side_effect=ValueError(FAKE_KEY)):
+            with self.assertRaises(ot.TTSRequestError) as caught:
+                self.provider().synthesize(self.script)
+        self.assertEqual(str(caught.exception),'tts_response_invalid')
+        self.assertEqual(caught.exception.diagnostics['exception_type'],'ValueError')
+        self.assertEqual(caught.exception.diagnostics['stage'],'audio_privacy')
+        self.assertEqual(caught.exception.diagnostics['received_bytes'],len(MP3))
+
     def test_bounded_audio_content_type_container_and_duration(self):
         cases = [({'Content-Type': 'application/json'}, [MP3]),
                  ({'Content-Type': 'audio/mpeg', 'Content-Length': str(vb.MAX_AUDIO+1)}, []),
@@ -134,6 +245,132 @@ class OpenAITTSTests(unittest.TestCase):
             self.response.iter_content.side_effect = lambda **kwargs: iter(chunks)
             with self.assertRaises(tg.BriefingError):
                 self.provider().synthesize(self.script)
+
+    def test_compressed_payload_is_not_mistaken_for_text_paths(self):
+        payload = b'C:\\ordinary https://untrusted.invalid/'
+        data = (MP3[:4]+payload+bytes(413-len(payload)))*2500
+        # The old text scanner falsely rejected this structurally valid MP3.
+        with self.assertRaises(ValueError):
+            vb.safe(data.decode('utf-8',errors='ignore'))
+        self.response.headers = {'Content-Type':'audio/mpeg'}
+        self.response.iter_content.side_effect = lambda **kwargs: iter((data,))
+        script, audio = self.generate('opaque')
+        self.assertEqual(ot.load_artifacts(self.report,'opaque'),(script,audio))
+        self.assertEqual(vb.mp3_duration(audio.data),65.306)
+
+    def test_voice_only_accepts_opaque_mp3_and_explicit_synthetic_caption(self):
+        payload = b'C:\\ordinary https://untrusted.invalid/'
+        data = (MP3[:4]+payload+bytes(413-len(payload)))*2500
+        audio = vb.AudioArtifact(self.script.report_schema_version,self.script.report_reference,
+                                 self.script.script_sha256,self.settings.provider_id,data,False)
+        config = tg.Configuration(FAKE_TOKEN,FAKE_CHAT,(FAKE_CHAT,))
+        telegram = MagicMock()
+        telegram.__enter__.return_value = telegram
+        telegram.post.return_value = Mock(status_code=200,json=Mock(return_value=dict(
+            ok=True,result=dict(message_id=1,chat=dict(id=int(FAKE_CHAT),type='private')))))
+        result = tg.deliver(self.report,tg.summary(self.report),None,config,voice=(self.script,audio),
+                            voice_only=True,session_factory=Mock(return_value=telegram))
+        self.assertTrue(result['voice_sent'])
+        self.assertFalse(result['message_sent'])
+        self.assertEqual(telegram.post.call_count,1)
+        self.assertIn('합성 테스트 데이터',telegram.post.call_args.kwargs['data']['caption'])
+
+    def test_actual_secret_bytes_are_still_rejected(self):
+        for secret in (FAKE_KEY,FAKE_TOKEN,FAKE_CHAT):
+            payload = secret.encode()
+            data = (MP3[:4]+payload+bytes(413-len(payload)))*2500
+            with self.assertRaisesRegex(tg.BriefingError,'sensitive_content_rejected'):
+                vb.scan_audio(data,(secret,))
+        self.response.headers = {'Content-Type':'audio/mpeg'}
+        payload = FAKE_KEY.encode()
+        data = (MP3[:4]+payload+bytes(413-len(payload)))*2500
+        self.response.iter_content.side_effect = lambda **kwargs: iter((data,))
+        with self.assertRaises(ot.TTSRequestError) as caught:
+            self.provider().synthesize(self.script)
+        self.assertEqual(str(caught.exception),'sensitive_content_rejected')
+        self.assertEqual(caught.exception.diagnostics['stage'],'audio_privacy')
+        self.assertNotIn(FAKE_KEY,json.dumps(caught.exception.diagnostics))
+
+    def test_bare_mpeg_and_id3_headers_preserve_frame_duration(self):
+        tag = bytes(12)
+        for major, flags in ((3,0),(4,0),(4,16)):
+            header = b'ID3'+bytes((major,0,flags,0,0,0,len(tag)))
+            data = header+tag+(b'3DI'+header[3:] if flags else b'')+MP3
+            self.assertEqual(vb.mp3_duration(data),vb.mp3_duration(MP3))
+            self.response.headers = {'Content-Type':'audio/mpeg'}
+            self.response.iter_content.side_effect = lambda **kwargs: iter((data,))
+            self.assertEqual(self.provider().synthesize(self.script).data,data)
+        mpeg2 = (b'\xff\xf3\x84\x00'+bytes(188))*3000
+        self.assertEqual(vb.mp3_duration(mpeg2),72.0)
+
+    def test_bad_headers_corrupt_frames_and_content_length_have_safe_stages(self):
+        bad_audio = (b'not mp3',MP3[:-1],b'ID3\x04\x00\x00\x80\x00\x00\x00'+MP3,
+                     b'ID3\x04\x00\x00\x7f\x7f\x7f\x7f'+MP3)
+        for data in bad_audio:
+            self.response.headers = {'Content-Type':'audio/mpeg'}
+            self.response.iter_content.side_effect = lambda **kwargs: iter((data,))
+            with self.assertRaises(ot.TTSRequestError) as caught:
+                self.provider().synthesize(self.script)
+            diagnostics = caught.exception.diagnostics
+            self.assertEqual(str(caught.exception),'invalid_audio')
+            self.assertEqual(diagnostics['stage'],'mp3_structure')
+            self.assertEqual(diagnostics['received_bytes'],len(data))
+            self.assertIn(diagnostics['mp3_header'],('id3','mpeg_frame','unknown'))
+            self.assertNotIn('data',diagnostics)
+        for length in ('²','9'*5000):
+            self.response.headers = {'Content-Type':'audio/mpeg','Content-Length':length}
+            with self.assertRaises(ot.TTSRequestError) as caught:
+                self.provider().synthesize(self.script)
+            self.assertEqual(caught.exception.diagnostics['stage'],'response_headers')
+            self.assertEqual(caught.exception.diagnostics['exception_type'],'ResponseValidationError')
+
+    def test_long_valid_audio_records_duration_without_relaxing_target(self):
+        data = (MP3[:417])*7000
+        with self.assertRaises(tg.BriefingError):
+            vb.mp3_duration(data)  # Preserve the generic 180 second ceiling.
+        measured = vb.mp3_duration(data,max_seconds=None)
+        self.assertGreater(measured,180)
+        self.response.headers = {'Content-Type':'audio/mpeg'}
+        self.response.iter_content.side_effect = lambda **kwargs: iter((data,))
+        with patch.dict('os.environ',{'OPENAI_API_KEY':FAKE_KEY}),patch.object(ot.requests,'Session',self.factory):
+            code, result = self.cli('--name','too-long','--generate','--approve-tts')
+        self.assertEqual(code,1)
+        self.assertEqual(result['reason'],'tts_duration_outside_target')
+        self.assertEqual(result['duration_seconds'],measured)
+        self.assertEqual(result['stage'],'duration_target')
+        self.assertFalse((tg.REPORTS/'too-long.mp3').exists())
+        receipt=json.loads((tg.REPORTS/'too-long.tts-attempt.json').read_text())
+        self.assertEqual(receipt['failure']['duration_seconds'],measured)
+
+    def test_duration_rejection_preserves_measured_seconds_without_audio_or_retry(self):
+        short = (b'\xff\xfb\x90\x00'+bytes(413))*40
+        self.response.headers = {'Content-Type':'audio/mpeg'}
+        self.response.iter_content.side_effect = lambda **kwargs: iter((short,))
+        with patch.dict('os.environ', {'OPENAI_API_KEY':FAKE_KEY}), patch.object(ot.requests,'Session',self.factory):
+            code, result = self.cli('--name','short','--generate','--approve-tts')
+        self.assertEqual(code, 1)
+        self.assertEqual(result['reason'], 'tts_duration_outside_target')
+        self.assertEqual(result['duration_seconds'], vb.mp3_duration(short))
+        self.assertEqual((result['minimum_seconds'],result['maximum_seconds']), (60,120))
+        receipt_path = tg.REPORTS/'short.tts-attempt.json'
+        receipt = json.loads(receipt_path.read_text())
+        self.assertEqual(receipt['status'], 'rejected_duration')
+        self.assertEqual(receipt['duration_seconds'], result['duration_seconds'])
+        self.assertNotIn(FAKE_KEY,json.dumps(result)+json.dumps(receipt))
+        self.assertFalse((tg.REPORTS/'short.mp3').exists())
+        with self.assertRaises(tg.BriefingError):
+            self.generate('short')
+        self.assertEqual(self.session.post.call_count,1)
+
+    def test_estimate_does_not_replace_measured_mp3_duration(self):
+        self.assertTrue(60 <= self.script.estimated_seconds <= 120)
+        long_audio = (b'\xff\xfb\x90\x00'+bytes(413))*5000
+        self.response.headers = {'Content-Type':'audio/mpeg'}
+        self.response.iter_content.side_effect = lambda **kwargs: iter((long_audio,))
+        with self.assertRaises(ot.DurationTargetError) as caught:
+            self.provider().synthesize(self.script)
+        self.assertEqual(caught.exception.duration_seconds, vb.mp3_duration(long_audio))
+        self.assertGreater(caught.exception.duration_seconds,120)
 
     def test_generation_requires_approval_and_preserves_existing_files(self):
         with self.assertRaisesRegex(tg.BriefingError, 'tts_approval_required'):
@@ -165,7 +402,7 @@ class OpenAITTSTests(unittest.TestCase):
                 self.generate()
         self.assertEqual(self.session.post.call_count, 1)
         self.assertFalse((tg.REPORTS/'spoken.mp3').exists())
-        self.assertEqual(json.loads((tg.REPORTS/'spoken.tts-attempt.json').read_text())['status'], 'reserved')
+        self.assertEqual(json.loads((tg.REPORTS/'spoken.tts-attempt.json').read_text())['status'], 'failed_or_unknown')
 
     def test_tampered_audio_report_or_receipt_blocked(self):
         self.generate()

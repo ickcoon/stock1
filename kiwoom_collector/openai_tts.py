@@ -14,9 +14,12 @@ import math
 import os
 from pathlib import Path
 import re
+import socket
+import ssl
 
 import requests
 from requests.adapters import HTTPAdapter
+from urllib3 import exceptions as ue
 
 from . import telegram_briefing as tg, voice_briefing as vb
 
@@ -24,6 +27,8 @@ MODELS = ('gpt-4o-mini-tts', 'gpt-4o-mini-tts-2025-12-15')
 VOICES = ('alloy', 'ash', 'ballad', 'coral', 'echo', 'fable', 'onyx', 'nova',
           'sage', 'shimmer', 'verse', 'marin', 'cedar')
 MAX_SCRIPT_CHARS = 2000
+MIN_SECONDS = 60
+MAX_SECONDS = 120
 INSTRUCTIONS = ('차분하고 자연스러운 한국어 뉴스 브리핑으로 읽으세요. '
                 '입력 원고만 그대로 읽고 사실, 종목, 숫자, 설명을 추가하거나 생략하지 마세요. '
                 '종목 코드의 각 자리와 한글로 풀어 쓴 숫자, 금액, 시각을 또렷하게 읽으세요. '
@@ -40,7 +45,93 @@ ERROR_CODES = frozenset((
     'real_audio_required', 'audio_integrity_failed', 'tts_receipt_invalid',
     'configuration_required', 'private_chat_allowlist_required', 'recipient_not_allowed',
     'sensitive_content_rejected', 'invalid_execution_mode',
+    'tts_dns_failed', 'tts_connection_failed', 'tts_tls_failed', 'tts_certificate_failed',
+    'tts_connect_timeout', 'tts_read_timeout', 'tts_timeout', 'tts_response_stream_failed',
+    'tts_quota_exhausted', 'tts_rate_limited', 'tts_server_error',
 ))
+
+PUBLIC_API_CODES = frozenset((
+    'invalid_api_key', 'model_not_found', 'insufficient_quota', 'credit_balance_exhausted',
+    'organization_spend_limit_exceeded', 'project_spend_limit_exceeded',
+    'organization_usage_limit_exceeded', 'usage_limit_exceeded',
+    'rate_limit_exceeded', 'slow_down', 'server_error', 'server_is_overloaded',
+))
+QUOTA_CODES = PUBLIC_API_CODES - {'invalid_api_key', 'model_not_found', 'rate_limit_exceeded',
+                                 'slow_down', 'server_error', 'server_is_overloaded'}
+
+
+class TTSRequestError(tg.BriefingError):
+    """Only allowlisted labels leave the HTTP adapter; never stringify a request exception."""
+    def __init__(self, reason, *, http_status=None, api_error_code=None, exception_type='HTTPError'):
+        super().__init__(reason)
+        self.diagnostics = dict(http_status=http_status, api_error_code=api_error_code,
+                                exception_type=exception_type)
+
+
+def public_api_code(response):
+    """Read at most 16 KiB of an error body, discard all but known enum codes."""
+    try:
+        data = bytearray()
+        for chunk in response.iter_content(chunk_size=1024):
+            if not isinstance(chunk, bytes) or len(data)+len(chunk) > 16384:
+                return None
+            data.extend(chunk)
+        body = json.loads(data)
+        error = body.get('error') if isinstance(body, dict) else None
+        if isinstance(error, dict):
+            for field in ('code', 'type'):
+                code = error.get(field)
+                if isinstance(code, str) and code in PUBLIC_API_CODES:
+                    return code
+    except Exception:
+        pass
+    return None
+
+
+def transport_error(error, http_status):
+    # requests/urllib3 wrap DNS, certificate and streamed read failures. Inspect
+    # exception objects only, never messages, request/response attributes or headers.
+    pending = [error]
+    chain = []
+    while pending and len(chain) < 24:
+        current = pending.pop()
+        if not isinstance(current, BaseException) or any(current is item for item in chain):
+            continue
+        chain.append(current)
+        pending.extend((current.__cause__, current.__context__, getattr(current, 'reason', None)))
+        pending.extend(item for item in current.args if isinstance(item, BaseException))
+    categories = (
+        (ssl.SSLCertVerificationError, 'tts_certificate_failed', 'SSLCertVerificationError'),
+        (socket.gaierror, 'tts_dns_failed', 'gaierror'),
+        (ue.NameResolutionError, 'tts_dns_failed', 'NameResolutionError'),
+        (requests.exceptions.SSLError, 'tts_tls_failed', 'SSLError'),
+        (ue.SSLError, 'tts_tls_failed', 'SSLError'),
+        (requests.exceptions.ConnectTimeout, 'tts_connect_timeout', 'ConnectTimeout'),
+        (requests.exceptions.ReadTimeout, 'tts_read_timeout', 'ReadTimeout'),
+        (ue.ReadTimeoutError, 'tts_read_timeout', 'ReadTimeoutError'),
+        (ue.NewConnectionError, 'tts_connection_failed', 'NewConnectionError'),
+        (ue.ConnectTimeoutError, 'tts_connect_timeout', 'ConnectTimeoutError'),
+        (TimeoutError, 'tts_timeout', 'TimeoutError'),
+        (requests.exceptions.Timeout, 'tts_timeout', 'Timeout'),
+        (requests.exceptions.ChunkedEncodingError, 'tts_response_stream_failed', 'ChunkedEncodingError'),
+        (requests.exceptions.ContentDecodingError, 'tts_response_stream_failed', 'ContentDecodingError'),
+        (requests.exceptions.ConnectionError, 'tts_connection_failed', 'ConnectionError'),
+        (ConnectionError, 'tts_connection_failed', 'ConnectionError'),
+        (requests.exceptions.RequestException, 'tts_transport_failed', 'RequestException'),
+        (RuntimeError, 'tts_transport_failed', 'RuntimeError'),
+        (ValueError, 'tts_transport_failed', 'ValueError'),
+    )
+    for kind, reason, label in categories:
+        if any(isinstance(item, kind) for item in chain):
+            return TTSRequestError(reason, http_status=http_status, exception_type=label)
+    return TTSRequestError('tts_transport_failed', http_status=http_status, exception_type='UnknownException')
+
+
+class DurationTargetError(tg.BriefingError):
+    """Expose only measured seconds, never response bodies or credentials."""
+    def __init__(self, duration_seconds):
+        super().__init__('tts_duration_outside_target')
+        self.duration_seconds = duration_seconds
 
 
 @dataclass(frozen=True)
@@ -119,6 +210,14 @@ class OpenAITTS:
         payload = dict(model=settings.model, voice=settings.voice, input=script.text,
                        instructions=INSTRUCTIONS, response_format=settings.response_format,
                        speed=settings.speed)
+        http_status = None
+        stage = 'request'
+        details = dict(content_type='unknown', received_bytes=0, mp3_header='unknown')
+        def diagnosed(error):
+            error.diagnostics['stage'] = stage
+            if http_status == 200:
+                error.diagnostics.update(details)
+            return error
         try:
             with quiet_http(), self.session_factory() as session:
                 session.trust_env = False
@@ -126,33 +225,67 @@ class OpenAITTS:
                 with session.post('https://api.openai.com/v1/audio/speech',
                                   headers={'Authorization': 'Bearer '+settings.key}, json=payload,
                                   timeout=(5, 90), allow_redirects=False, verify=True, stream=True) as response:
+                    http_status = response.status_code
+                    stage = 'response_headers'
                     failures = {400: 'tts_request_rejected', 401: 'tts_authentication_failed',
                                 403: 'tts_permission_denied', 404: 'tts_model_unavailable',
                                 429: 'tts_rate_or_quota_limited'}
-                    tg.require(response.status_code == 200,
-                               failures.get(response.status_code, 'tts_api_failed'))
+                    if http_status != 200:
+                        code = public_api_code(response)
+                        reason = failures.get(http_status, 'tts_server_error' if 500 <= http_status <= 599 else 'tts_api_failed')
+                        if http_status == 429 and code in QUOTA_CODES:
+                            reason = 'tts_quota_exhausted'
+                        elif http_status == 429 and code in ('rate_limit_exceeded', 'slow_down'):
+                            reason = 'tts_rate_limited'
+                        raise TTSRequestError(reason, http_status=http_status, api_error_code=code)
                     mime = response.headers.get('Content-Type', '').split(';')[0].strip().lower()
+                    details['content_type'] = mime if mime in ('audio/mpeg','audio/mp3','application/json','text/html') else 'other'
                     tg.require(mime in ('audio/mpeg', 'audio/mp3'), 'tts_response_invalid')
                     content_length = response.headers.get('Content-Length')
                     if content_length is not None:
-                        tg.require(content_length.isdigit(), 'tts_response_invalid')
+                        tg.require(bool(re.fullmatch(r'[0-9]{1,20}', content_length)), 'tts_response_invalid')
+                        details['declared_bytes'] = int(content_length)
                         tg.require(int(content_length) <= vb.MAX_AUDIO, 'tts_audio_too_large')
                     data = bytearray()
+                    stage = 'response_body'
                     for chunk in response.iter_content(chunk_size=65536):
                         tg.require(isinstance(chunk, bytes), 'tts_response_invalid')
                         tg.require(len(data)+len(chunk) <= vb.MAX_AUDIO, 'tts_audio_too_large')
                         data.extend(chunk)
+                        details['received_bytes'] = len(data)
+            details['mp3_header'] = ('id3' if data[:3] == b'ID3' else 'mpeg_frame'
+                                     if len(data)>=2 and data[0]==255 and data[1]&224==224 else 'unknown')
             audio = vb.AudioArtifact(script.report_schema_version, script.report_reference,
                                      script.script_sha256, settings.provider_id, bytes(data), False)
-            duration = vb.mp3_duration(audio.data)
-            tg.require(60 <= duration <= 120, 'tts_duration_outside_target')
-            vb.safe(audio.data.decode('utf-8', errors='ignore'))
-            tg.scan(audio.data.decode('utf-8', errors='ignore'), (settings.key,))
+            stage = 'mp3_structure'
+            # Count all bounded input frames even above the generic 180s ceiling,
+            # then reject outside 60..120 with its actual measured duration.
+            duration = vb.mp3_duration(audio.data, max_seconds=None)
+            details['duration_seconds'] = duration
+            stage = 'duration_target'
+            if not MIN_SECONDS <= duration <= MAX_SECONDS:
+                error = DurationTargetError(duration)
+                error.diagnostics = dict(http_status=http_status, api_error_code=None,
+                                         exception_type='DurationTargetError')
+                raise diagnosed(error)
+            stage = 'audio_privacy'
+            vb.scan_audio(audio.data, (settings.key,))
             return audio
-        except tg.BriefingError:
+        except TTSRequestError as error:
+            raise diagnosed(error)
+        except DurationTargetError:
             raise
-        except Exception:
-            raise tg.BriefingError('tts_transport_failed') from None
+        except tg.BriefingError as error:
+            reason = str(error) if str(error) in ERROR_CODES else 'tts_response_invalid'
+            raise diagnosed(TTSRequestError(reason, http_status=http_status,
+                                  exception_type='ResponseValidationError')) from None
+        except (ValueError, TypeError, AttributeError) as error:
+            if http_status == 200:
+                label = 'ValueError' if isinstance(error, ValueError) else 'TypeError' if isinstance(error, TypeError) else 'AttributeError'
+                raise diagnosed(TTSRequestError('tts_response_invalid', http_status=http_status, exception_type=label)) from None
+            raise diagnosed(transport_error(error, http_status)) from None
+        except Exception as error:
+            raise diagnosed(transport_error(error, http_status)) from None
 
 
 def validate_script(script, secrets=()):
@@ -194,7 +327,18 @@ def generate_once(report, settings, name, *, approved=False, session_factory=Non
             stream.flush()
             os.fsync(stream.fileno())
         save()
-        audio = OpenAITTS(settings, session_factory=session_factory).synthesize(script)
+        try:
+            audio = OpenAITTS(settings, session_factory=session_factory).synthesize(script)
+        except DurationTargetError as error:
+            receipt.update(status='rejected_duration', duration_seconds=error.duration_seconds)
+            if hasattr(error, 'diagnostics'):
+                receipt['failure'] = error.diagnostics
+            save()
+            raise
+        except TTSRequestError as error:
+            receipt.update(status='failed_or_unknown', reason=str(error), failure=error.diagnostics)
+            save()
+            raise
         vb.validate_audio(report, script, audio)
         vb.write_artifacts(report, script, audio, name)
         receipt.update(status='generated', audio_sha256=hashlib.sha256(audio.data).hexdigest())
@@ -224,11 +368,11 @@ def load_artifacts(report, name, *, secrets=()):
     audio = vb.AudioArtifact(script.report_schema_version, script.report_reference, script.script_sha256,
                              info['provider'], data, False)
     duration = vb.validate_audio(report, script, audio)
-    tg.require(60 <= duration <= 120 and duration == info['duration_seconds'], 'tts_duration_outside_target')
+    tg.require(MIN_SECONDS <= duration <= MAX_SECONDS and duration == info['duration_seconds'], 'tts_duration_outside_target')
     tg.require(receipt == dict(status='generated', report_reference=script.report_reference,
                               script_sha256=script.script_sha256, provider=audio.provider,
                               audio_sha256=info['sha256']), 'tts_receipt_invalid')
-    tg.scan(data.decode('utf-8', errors='ignore'), secrets)
+    vb.scan_audio(data, secrets)
     return script, audio
 
 
@@ -271,6 +415,10 @@ def main(argv=None):
                 if all(p.exists() for p in paths):
                     _, audio = load_artifacts(report, args.name, secrets=secrets)
                 result = dict(status='dry_run', settings=settings.public(), script=asdict(script),
+                              script_characters=len(script.text),
+                              nonspace_characters=len(re.sub(r'\s', '', script.text)),
+                              estimate_method='nonspace_chars_div_5.5_plus_sentence_pauses',
+                              target_seconds=dict(minimum=MIN_SECONDS, maximum=MAX_SECONDS),
                               artifacts_present=all(p.exists() for p in paths),
                               audio_validated=audio is not None,
                               duration_seconds=vb.mp3_duration(audio.data) if audio else None,
@@ -281,7 +429,13 @@ def main(argv=None):
         return 0 if result['status'] in ('dry_run', 'generated', 'sent') else 1
     except Exception as error:
         reason = str(error) if isinstance(error, tg.BriefingError) and str(error) in ERROR_CODES else 'voice_validation_failed'
-        print(json.dumps(dict(status='rejected', reason=reason)))
+        result = dict(status='rejected', reason=reason)
+        if isinstance(error, (TTSRequestError, DurationTargetError)) and hasattr(error, 'diagnostics'):
+            result.update(error.diagnostics)
+        if isinstance(error, DurationTargetError):
+            result.update(duration_seconds=error.duration_seconds,
+                          minimum_seconds=MIN_SECONDS, maximum_seconds=MAX_SECONDS)
+        print(json.dumps(result))
         return 1
 
 

@@ -149,9 +149,102 @@ class TelegramBriefingTests(unittest.TestCase):
     def test_network_timeout_unknown_reservation_retained(self):
         self.session.post.side_effect=requests.Timeout('URL bot'+FAKE_TOKEN)
         result=self.deliver()
-        self.assertEqual(result['reason'],'telegram_transport_failed')
+        self.assertEqual(result['reason'],'telegram_timeout')
         self.assertEqual(self.deliver()['status'],'duplicate_blocked')
         self.assertNotIn(FAKE_TOKEN,json.dumps(result))
+
+    def test_connection_exception_types_are_public_and_no_request_details_escape(self):
+        secret = FAKE_TOKEN+FAKE_CHAT
+        cases = (
+            (requests.ConnectionError(tg.socket.gaierror(-2,secret)),'telegram_dns_failed','gaierror'),
+            (requests.ConnectionError(ConnectionRefusedError(secret)),'telegram_connection_failed','ConnectionError'),
+            (requests.exceptions.SSLError(tg.ssl.SSLCertVerificationError(1,secret)),
+             'telegram_certificate_failed','SSLCertVerificationError'),
+            (requests.exceptions.SSLError(secret),'telegram_tls_failed','SSLError'),
+            (requests.ConnectTimeout(secret),'telegram_connect_timeout','ConnectTimeout'),
+            (requests.ReadTimeout(secret),'telegram_read_timeout','ReadTimeout'),
+            (requests.ConnectionError(tg.ue.ReadTimeoutError(None,secret,secret)),
+             'telegram_read_timeout','ReadTimeoutError'),
+            (requests.ConnectionError(TimeoutError(secret)),'telegram_timeout','TimeoutError'),
+        )
+        for error, reason, label in cases:
+            self.session.post.side_effect = error
+            with self.assertRaises(tg.TelegramRequestError) as caught:
+                tg.api_call(self.session,self.config,'sendMessage',text='synthetic')
+            self.assertEqual(str(caught.exception),reason)
+            self.assertEqual(caught.exception.diagnostics['exception_type'],label)
+            self.assertEqual(caught.exception.diagnostics['stage'],'request_response')
+            self.assertIsNone(caught.exception.diagnostics['http_status'])
+            for value in (FAKE_TOKEN,FAKE_CHAT):
+                self.assertNotIn(value,json.dumps(caught.exception.diagnostics))
+        self.assertEqual(self.session.post.call_count,len(cases))
+
+    def test_voice_upload_timeout_is_unknown_persisted_and_never_retried(self):
+        from dataclasses import replace
+        from kiwoom_collector import voice_briefing as vb
+        script=vb.build_script(self.report)
+        audio=replace(vb.SilenceFixtureTTS().synthesize(script),is_test=False)
+        self.session.post.side_effect=requests.ConnectionError(TimeoutError(FAKE_TOKEN+FAKE_CHAT))
+        result=tg.deliver(self.report,tg.summary(self.report),None,self.config,voice=(script,audio),
+                          voice_only=True,session_factory=self.factory)
+        self.assertEqual(result['status'],'failed_or_unknown')
+        self.assertEqual(result['method'],'sendVoice')
+        self.assertEqual(result['stage'],'upload_or_response')
+        self.assertEqual(result['reason'],'telegram_timeout')
+        self.assertFalse(result['voice_sent'])
+        self.assertFalse(result['message_sent'])
+        saved=json.loads(next(tg.STATE.iterdir()).read_text())
+        self.assertEqual(saved['status'],'failed_or_unknown')
+        self.assertEqual(saved['failure']['exception_type'],'TimeoutError')
+        for secret in (FAKE_TOKEN,FAKE_CHAT):
+            self.assertNotIn(secret,json.dumps(result)+json.dumps(saved))
+        again=tg.deliver(self.report,tg.summary(self.report),None,self.config,voice=(script,audio),
+                          voice_only=True,session_factory=self.factory)
+        self.assertEqual(again['status'],'duplicate_blocked')
+        self.assertEqual(self.session.post.call_count,1)
+
+    def test_http_and_telegram_numeric_codes_ignore_description(self):
+        for status, code in ((400,400),(401,401),(403,403),(429,429),(500,500),(200,400)):
+            self.session.post.return_value=Mock(status_code=status,json=Mock(return_value=dict(
+                ok=False,error_code=code,description=FAKE_TOKEN+FAKE_CHAT,
+                parameters=dict(retry_after=FAKE_CHAT))))
+            with self.assertRaises(tg.TelegramRequestError) as caught:
+                tg.api_call(self.session,self.config,'sendMessage',text='synthetic')
+            self.assertEqual(str(caught.exception),'telegram_api_failed' if status==200 else 'telegram_http_failed')
+            self.assertEqual(caught.exception.diagnostics['http_status'],status)
+            self.assertEqual(caught.exception.diagnostics['api_error_code'],code)
+            self.assertNotIn(FAKE_TOKEN,json.dumps(caught.exception.diagnostics))
+            self.assertNotIn(FAKE_CHAT,json.dumps(caught.exception.diagnostics))
+
+    def test_invalid_json_and_wrong_recipient_are_response_stage_errors(self):
+        self.session.post.return_value.json.side_effect=ValueError(FAKE_TOKEN)
+        result=self.deliver(html=False)
+        self.assertEqual(result['status'],'failed_or_unknown')
+        self.assertEqual(result['reason'],'telegram_response_invalid')
+        self.assertEqual(result['http_status'],200)
+        self.assertEqual(result['stage'],'response_json')
+        self.assertEqual(result['exception_type'],'JSONDecodeError')
+        self.assertNotIn(FAKE_TOKEN,json.dumps(result))
+        self.session.post.return_value=Mock(status_code=200,json=Mock(return_value=dict(
+            ok=True,result=dict(message_id=1,chat=dict(id=1,type='private')))))
+        with self.assertRaises(tg.TelegramRequestError) as caught:
+            tg.api_call(self.session,self.config,'sendMessage',text='synthetic')
+        self.assertEqual(caught.exception.diagnostics['stage'],'recipient_validation')
+
+    def test_sendaudio_transport_uses_unchanged_tls_and_timeout_contract(self):
+        from kiwoom_collector import voice_briefing as vb
+        audio=vb.SilenceFixtureTTS().synthesize(vb.build_script(self.report)).data
+        self.session.post.side_effect=requests.ConnectTimeout(FAKE_TOKEN)
+        with self.assertRaises(tg.TelegramRequestError) as caught:
+            tg.api_call(self.session,self.config,'sendAudio',audio=audio)
+        self.assertEqual(caught.exception.diagnostics['method'],'sendAudio')
+        self.assertEqual(caught.exception.diagnostics['stage'],'upload_or_response')
+        kwargs=self.session.post.call_args.kwargs
+        self.assertEqual(kwargs['timeout'],(5,20))
+        self.assertTrue(kwargs['verify'])
+        self.assertFalse(kwargs['allow_redirects'])
+        self.assertIn('audio',kwargs['files'])
+        self.assertEqual(self.session.post.call_count,1)
 
     def test_partial_document_failure_does_not_resend_message(self):
         ok=self.session.post.return_value

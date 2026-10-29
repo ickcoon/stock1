@@ -60,3 +60,26 @@ preflight_ok 확인 및 사용자 재승인 후에만 실행할 문자 1건 명�
 ```powershell
 .\.venv\Scripts\python.exe -B -m kiwoom_collector.telegram_briefing --report reports/telegram-once-preflight.json --send
 ```
+
+## C5-F MP3 전송 실패 진단
+
+실제 음성 전송 결과는 failed_or_unknown / telegram_transport_failed였다. 기존 api_call은 session.post와 response.json에서 발생한 일반 예외를 모두 같은 코드로 바꿨다. 따라서 DNS/TCP/TLS/타임아웃/JSON 해석 실패 중 어느 경우인지 과거 기록만으로 확정할 수 없다. 기존 음성 예약은 reserved 및 voice_sent=false이며 상세 예외가 없다. message_sent=false와 document_sent=false는 음성 전용 모드에서 문자/문서를 요청하지 않았다는 뜻이고, voice_sent=false는 성공 확인이 없다는 뜻이다. 실제 Telegram 수신 여부는 알 수 없다.
+
+| 항목 | 문자 | 음성 |
+|---|---|---|
+| 메서드 | sendMessage | sendVoice 또는 sendAudio |
+| 요청 본문 | JSON | MP3 포함 multipart/form-data |
+| 호스트/인증 | 고정 api.telegram.org, URL의 Bot Token | 동일 |
+| TLS/리다이렉트 | verify=True, redirects=False | 동일 |
+| 타임아웃 | (5,20) | 동일 |
+| 프록시·재시도 | trust_env=False, retries=0 | 동일 |
+
+97.104초는 오디오 재생시간이며 업로드 시간이나 API 처리 시간과 같지 않다. multipart 업로드/응답 수신이 하나의 requests session.post에 묶여 있으므로 응답을 받기 전 타임아웃을 업로드 실패로 단정하지 않는다. 실패 단계 upload_or_response는 이 불확실성을 명시한다. 설정과 기존 문자 성공 흐름은 변경하지 않았다.
+
+최소 수정은 TelegramRequestError와 고정 진단 분류다. 기록 필드는 method, stage, http_status, api_error_code, exception_type뿐이다. DNS/TCP/TLS/인증서/연결·읽기 타임아웃을 예외 체인의 알려진 타입으로 분류하며 예외 메시지는 보지 않는다. HTTP 비200과 HTTP 200의 ok=false를 구분하고, error_code는 허용된 공개 정수만 남긴다. 응답 JSON 오류·수신자 불일치도 단계별로 구분한다. 설명문, 헤더, URL, Chat ID, 요청 본문, 오디오 바이트는 기록하지 않는다.
+
+새 실패는 기존 배타적 예약 파일의 열린 descriptor에 failed_or_unknown과 정제된 failure를 fsync한다. 기존 예약은 삭제/재작성하지 않는다. session.post가 응답 전에 실패하면 http_status=null이며 서버가 요청을 받지 않았다는 보장은 아니다. 본문이 비정상이어도 실제 메시지가 생성됐을 수 있으므로 failed_or_unknown을 유지한다. 중복 방지·재시도 없음·문자/HTML 자동 대체 없음 정책을 유지한다. OpenAI TTS는 다시 호출하지 않는다.
+
+다음 조치는 휴대폰에서 실제 수신 여부를 먼저 확인하는 것이다. 결과 불명 예약을 지우거나 새 파일명으로 우회해 재전송하지 않는다. 새 파일명도 동일 거래일/대상 음성 중복 키를 바꾸지 않는다. 미수신으로 판단하더라도 실제 재전송은 별도 승인과 복구 절차 결정 후에만 가능하다. 이번 진단에서는 실제 Telegram/OpenAI를 호출하지 않는다.
+
+최종 검증: 전체 회귀 **890개, 166.224초, OK**. Telegram 39개, 음성 기반 30개, TTS 40개 포함. 외부 네트워크/운영 경로 접근은 audit guard로 차단했다. 기존 실제 Telegram 예약 두 개는 SHA256 일치로 보존을 확인했다. 로그는 Git 제외 `.venv/test-results-c5f-telegram-diagnostic.txt`에 보관한다. 이번 수정은 telegram_briefing.py, test_telegram_briefing.py, 본 문서이며 앞선 미커밋 작업은 유지했다. 실제 재전송/OpenAI 호출/Commit/Push는 수행하지 않았다.

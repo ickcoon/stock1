@@ -22,6 +22,14 @@ def safe(value):
     tg.require(not re.search(r'\bsk-[A-Za-z0-9_-]{10,}', text), 'sensitive_content_rejected')
 
 
+def scan_audio(data, secrets=()):
+    """Compressed audio is opaque bytes, not free text or a filesystem path."""
+    tg.require(isinstance(data, bytes) and len(data) <= MAX_AUDIO, 'invalid_audio')
+    tg.require(not re.search(rb'\bsk-[A-Za-z0-9_-]{10,}', data), 'sensitive_content_rejected')
+    tg.require(not re.search(tg.TOKEN.pattern.encode('ascii'), data), 'sensitive_content_rejected')
+    tg.require(not any(value and value.encode('utf-8') in data for value in secrets), 'sensitive_content_rejected')
+
+
 def korean_number(value):
     number = tg.am.number(str(value))
     tg.require(number is not None, 'invalid_spoken_number')
@@ -82,10 +90,10 @@ class SpeechScript:
 def build_script(report):
     tg.validate(report);safe(report)
     cutoff=tg.am.instant(report['selection_cutoff_at']);day=cutoff.date()
-    lines=['안녕하세요. 아르비스의 오전 관심도 브리핑입니다. 이 음성은 인공지능이 생성한 음성입니다.',
+    lines=['안녕하세요. 아르비스 오전 관심도 브리핑입니다. 인공지능이 생성한 음성입니다.',
            korean_number(str(day.year))+' 년 '+korean_number(str(day.month))+' 월 '+korean_number(str(day.day))+' 일, 분석 기준은 '+pronounce_time(report['selection_cutoff_at'])+'입니다.',
            '데이터 환경은 '+('모의, mock' if report['environment']=='mock' else '실전 표시, real')+'입니다. 다만 이 보고서의 출처는 합성 픽스처이며 실측 결과가 아닙니다.',
-           '이번 내용은 매매 확정 신호가 아닙니다. 모든 후보는 미확정이며 확정 선정이나 주문으로 연결하지 않습니다.']
+           '모든 후보는 미확정입니다. 매매 확정 신호나 주문 지시가 아닙니다.']
     full=report['completeness']['top20_complete'] and report['completeness']['accepted_slots']==list(tg.am.SLOTS)
     rows=[r for r in report['rows'] if r['candidate_status']!='insufficient_evidence'] if full else []
     rows.sort(key=lambda r:(-r['top5_appearances'],-r['top20_appearances'],r['rank_history'][-1]['rank'],r['stock_code']))
@@ -93,9 +101,9 @@ def build_script(report):
         lines+=['오전 관측 또는 관심도 근거가 부족합니다. 임의로 상위 세 종목을 만들지 않고 판단을 보류합니다.',
                 '관측이 없는 회차를 보간하거나 이후 시세로 채우지 않았습니다. 가격과 거래대금, 시가총액이 없거나 검증되지 않았다면 충족했다고 말할 수 없습니다.']
     else:
-        lines+=['종목명은 보고서에 없으므로 종목 코드로 읽겠습니다. 관심도 순서이며 수익률 순위가 아닙니다.']
+        lines+=['종목명은 보고서에 없으므로 코드로 읽겠습니다. 관심도 순서입니다.']
         for row in rows[:3]:
-            words='종목 코드 '+pronounce_code(row['stock_code'])+'입니다. 상위 다섯 순위에 '+korean_number(str(row['top5_appearances']))+' 회, 상위 스무 순위에 '+korean_number(str(row['top20_appearances']))+' 회 등장했습니다.'
+            words='종목 코드 '+pronounce_code(row['stock_code'])+'입니다. 상위 다섯 순위에 '+korean_number(str(row['top5_appearances']))+' 회, 상위 스무 순위에 '+korean_number(str(row['top20_appearances']))+' 회입니다.'
             reasons=[tg.REASONS[r].replace('TOP5','상위 다섯 순위').replace('TOP20','상위 스무 순위') for r in row['reasons'][:2]]
             words+=' 근거는 '+', '.join(reasons)+'입니다.'
             price=row['evidence']['price']['observations']
@@ -106,12 +114,12 @@ def build_script(report):
             lines.append(words)
         sectors=sorted({p['sector'] for row in rows for p in row['sector_companions'] if p['count']>0})[:3]
         lines.append('관심도 동반 섹터는 '+', '.join(pronounce_label(s) for s in sectors)+'입니다. 시세 주도력 확정은 아닙니다.' if sectors else '동반 섹터를 판단할 근거는 부족합니다.')
-    lines+=['관측 마감 뒤에 들어온 데이터는 이 판단에 사용하지 않았습니다. 조회 관심도의 반복만으로 실제 자금 유입이나 다음 날 상승을 단정하지 않습니다.',
-            '이 분석만으로 주도주와 후속주의 인과관계를 확정할 수 없습니다. 거래대금 증가도 확인된 관측 구간의 변화일 뿐, 하루 전체 흐름이나 주문 체결 가능성을 보장하지 않습니다.',
-            '세부 순위 이력, 관측 시각, 가격과 단위, 부족한 근거는 연결된 동일 버전의 제이슨 보고서와 에이치 티 엠 엘 보고서에서 확인할 수 있습니다. 모르는 정보는 추정하지 않겠습니다. 이상 아르비스였습니다.']
+    lines+=['관심도만으로 자금 유입이나 상승을 단정하지 않습니다.',
+            '부족한 근거는 동일 버전 보고서에서 확인하세요. 이상 아르비스였습니다.']
     text='\n'.join(lines);safe(text)
-    # Reading-speed estimate only; actual duration is measured from generated frames.
-    seconds=round(len(re.sub(r'\s','',text))/7)
+    # Conservative planning heuristic, not measured TTS speed or a duration guarantee.
+    # Include pauses; do not clamp the estimate into the acceptance interval.
+    seconds=round(len(re.sub(r'\s','',text))/5.5 + text.count('.')*0.4)
     return SpeechScript(
         'arvis-speech-v1',report['schema_version'],report['evaluation_reference'],report['trade_date'],report['selection_cutoff_at'],report['environment'],text,hashlib.sha256(text.encode()).hexdigest(),seconds)
 
@@ -143,7 +151,7 @@ class SilenceFixtureTTS:
                              (b'\xff\xfb\x90\x00'+bytes(413))*40,True)
 
 
-def mp3_duration(data):
+def mp3_duration(data, *, max_seconds=180):
     tg.require(isinstance(data,bytes) and 8<=len(data)<=MAX_AUDIO,'invalid_audio')
     position=0;seconds=0;frames=0
     if data[:3]==b'ID3':
@@ -161,7 +169,7 @@ def mp3_duration(data):
         size=(144000 if version==3 else 72000)*(rates1 if version==3 else rates2)[rate]//hz+((h>>9)&1)
         tg.require(size>=4 and position+size<=len(data),'invalid_audio')
         seconds+=(1152 if version==3 else 576)/hz;frames+=1;position+=size
-    tg.require(frames>=2 and 0<seconds<=180,'invalid_audio')
+    tg.require(frames>=2 and seconds>0 and (max_seconds is None or seconds<=max_seconds),'invalid_audio')
     return round(seconds,3)
 
 
@@ -170,7 +178,7 @@ def validate_audio(report,script,audio):
     tg.require(isinstance(audio,AudioArtifact) and type(audio.is_test) is bool and audio.format=='mp3','invalid_audio')
     tg.require((audio.report_schema_version,audio.report_reference,audio.script_sha256)==(script.report_schema_version,script.report_reference,script.script_sha256),'audio_report_mismatch')
     tg.am.label(audio.provider);safe(audio.provider)
-    safe(audio.data.decode('utf-8',errors='ignore'))
+    scan_audio(audio.data)
     return mp3_duration(audio.data)
 
 
