@@ -38,3 +38,6 @@ credentials.json
 
 # Standalone daily-chart live diagnostics (not operational SQLite data).
 /diagnostics/
+
+# Portable local AM analysis reports.
+/reports/
