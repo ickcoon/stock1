@@ -27,6 +27,8 @@ class RealCatalogTests(unittest.TestCase):
         self.env.write_text('KIWOOM_ENV=mock\nKIWOOM_APP_KEY=SYNTHETIC_OPERATING\nKIWOOM_SECRET_KEY=SYNTHETIC_OLD_SECRET\n', encoding='utf-8')
         p = patch.object(cli, 'OPERATING_ENV', self.env)
         p.start(); self.addCleanup(p.stop)
+        p=patch.object(cli,'prepare_database')
+        p.start(); self.addCleanup(p.stop)
 
     def test_prompt_reuses_auth_without_environment_or_file_changes(self):
         before = dict(os.environ), self.env.read_bytes()
@@ -150,3 +152,67 @@ class RealCatalogTests(unittest.TestCase):
     def test_after_close_guard_and_provider_not_called_in_daytime(self):
         with self.assertRaises(catalog.CatalogError):
             after_close(datetime.fromisoformat('2026-10-30T10:00:00+09:00'))
+
+
+class LocalDatabasePreparationTests(unittest.TestCase):
+    def setUp(self):
+        self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
+        self.root=Path(self.temp.name).resolve()
+        self.db=self.root/'master'/'c10-master.db'
+        for p in (patch.multiple(master_data,PROJECT=self.root,MASTER_ROOT=self.root/'master'),
+                  patch.object(cli,'DEFAULT_DB',self.db)):
+            p.start();self.addCleanup(p.stop)
+
+    def test_missing_db_reproduces_safe_failure_without_network(self):
+        with patch.object(cli,'prompted_provider') as provider,patch.object(catalog,'main') as run, \
+                redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(cli.main(FLAGS+['--diagnose-once']),2)
+        provider.assert_not_called();run.assert_not_called()
+        self.assertEqual(json.loads(output.getvalue())['exception_type'],'FileNotFoundError')
+        self.assertFalse(self.db.exists())
+
+    def test_prepare_creates_empty_master_and_repeated_prepare_preserves_bytes(self):
+        with patch.object(cli,'prompted_provider') as provider,patch.object(catalog,'main') as run, \
+                redirect_stdout(io.StringIO()) as output:
+            self.assertEqual(cli.main(['--prepare-db']),0)
+        provider.assert_not_called();run.assert_not_called()
+        self.assertTrue(json.loads(output.getvalue())['created'])
+        before=self.db.read_bytes()
+        self.assertFalse(cli.prepare_database(create=True)['created'])
+        self.assertEqual(self.db.read_bytes(),before)
+        with master_data.read_master(self.db,synthetic=False) as (q,_):
+            self.assertEqual(q.db.execute('SELECT count(*) FROM stock_master').fetchone()[0],0)
+            self.assertEqual(q.db.execute('SELECT count(*) FROM market_cap_cache').fetchone()[0],0)
+
+    def test_invalid_existing_and_synthetic_databases_are_never_replaced(self):
+        import sqlite3
+        for name in ('corrupt','wrong_schema','synthetic'):
+            with self.subTest(name=name):
+                path=self.root/'master'/(name+'.db');path.parent.mkdir(exist_ok=True)
+                if name=='corrupt':path.write_bytes(b'PRIVATE_INVALID_DATABASE')
+                elif name=='synthetic':master_data.create_master(name,synthetic=True)
+                else:
+                    db=sqlite3.connect(path)
+                    try:
+                        db.execute('CREATE TABLE unrelated(value)');db.commit()
+                    finally:db.close()
+                before=path.read_bytes()
+                with patch.object(cli,'DEFAULT_DB',path),redirect_stdout(io.StringIO()) as output:
+                    self.assertEqual(cli.main(['--prepare-db']),2)
+                self.assertEqual(path.read_bytes(),before)
+                self.assertNotIn('PRIVATE',output.getvalue())
+
+    def test_sidecars_and_outside_path_are_rejected_without_creation(self):
+        self.db.parent.mkdir()
+        sidecar=Path(str(self.db)+'-wal');sidecar.write_bytes(b'PRIVATE')
+        with self.assertRaises(ValueError):cli.prepare_database(create=True)
+        self.assertFalse(self.db.exists());self.assertEqual(sidecar.read_bytes(),b'PRIVATE')
+        outside=self.root/'operating.db'
+        with patch.object(cli,'DEFAULT_DB',outside),self.assertRaises(ValueError):
+            cli.prepare_database(create=True)
+        self.assertFalse(outside.exists())
+
+    def test_prepare_rejects_live_flags_before_any_work(self):
+        with redirect_stderr(io.StringIO()),self.assertRaises(SystemExit):
+            cli.main(['--prepare-db']+FLAGS)
+        self.assertFalse(self.db.exists())
