@@ -122,15 +122,19 @@ def validate(report, secrets=()):
         from . import am_briefing
         am_briefing.validate(report)
         return report
-    keys(report, TOP_KEYS)
+    window = am.timing.from_document(report)
+    keys(report, TOP_KEYS | ({'observation_policy','decision_deadline_at'} if window else set()))
     require(report['schema_version'] == am.SCHEMA and report['selection_type'] == 'AM_MOMENTUM')
     require(report['source_kind'] in ('fixture', 'readonly_adapter'), 'unsupported_source_kind')
     require(report['environment'] in ('mock', 'real') and report['market'] in ('KRX', 'NXT', 'SOR'))
     require(report['environment'] != 'mock' or report['market'] == 'KRX')
     require(report['candidate_confirmed'] is False and report['d0_storage_allowed'] is False, 'unconfirmed_report_required')
     cutoff = am.instant(report['selection_cutoff_at'])
+    deadline = window.deadline(cutoff) if window else cutoff
+    if window:
+        require(report['decision_deadline_at']==deadline.isoformat())
     require(date.fromisoformat(report['trade_date']) == cutoff.date())
-    require(am.instant(report['generated_at']) >= cutoff)
+    require(am.instant(report['generated_at']) >= deadline)
     require('09:20' <= cutoff.strftime('%H:%M') <= '09:50')
     require(report['notice'] == (am.NOTICE if report['source_kind'] == 'fixture' else am.ADAPTER_NOTICE))
     keys(report['policy'], POLICY_KEYS)
@@ -153,7 +157,7 @@ def validate(report, secrets=()):
     codes = []
     def times(item):
         observed, received = am.instant(item['observed_at']), am.instant(item['received_at'])
-        require(observed.date() == cutoff.date() and received.date() == cutoff.date() and observed <= received <= cutoff)
+        require(am.timing.available(window,observed,received,cutoff))
     for row in report['rows']:
         keys(row, ROW_KEYS)
         require(isinstance(row['stock_code'], str) and am.CODE.fullmatch(row['stock_code']))
@@ -165,7 +169,9 @@ def validate(report, secrets=()):
         ranks = []
         for h in row['rank_history']:
             keys(h, ('slot','observed_at','received_at','rank','top20_complete')); times(h)
-            require(am.instant(h['observed_at']).strftime('%H:%M') == h['slot'])
+            anchor = am.instant(report['trade_date']+'T'+h['slot']+':00+09:00')
+            require(am.timing.near(window,h['observed_at'],h['received_at'],anchor) if window
+                    else am.instant(h['observed_at']).strftime('%H:%M') == h['slot'])
             require(type(h['top20_complete']) is bool)
             require(h['rank'] is None or type(h['rank']) is int and 1 <= h['rank'] <= 20)
             if h['rank'] is not None: ranks.append(h['rank'])

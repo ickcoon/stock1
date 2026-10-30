@@ -1,5 +1,9 @@
 # Step 7-C8 — 병원 PC 실데이터 검증 준비
 
+C10 확장: `--timing-policy`와 선택적 `--master-db`를 지원한다. 정책 지정 시 09:40 예비/09:50 최종
+관측 창과 별도 수신 마감을 적용하며, 정책 미지정 시 아래 기존 strict 진단을 유지한다.
+[정책 설정·캐시 계약](STOCK_MASTER.md)을 참조한다. C8 오프라인 원본 접근 정책은 변경하지 않는다.
+
 `kiwoom_collector.am_data_diagnostic`는 C7 입력 어댑터와 기존 SQLite 읽기 전용 접근기를
 사용하는 로컬 진단 CLI다. 집 PC 검증은 합성 fixture에서 만든 격리 DB만 사용한다.
 병원 원본 검증은 병원 PC에서 별도 실행한다. 운영 DB·수집기·스케줄러·Telegram 코드는

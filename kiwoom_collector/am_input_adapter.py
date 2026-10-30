@@ -14,6 +14,7 @@ import sqlite3
 
 from . import am_momentum as am, am_briefing as briefing
 from .cross_adapter import readonly_database
+from . import am_time_policy as timing
 
 
 def fingerprint(record):
@@ -98,8 +99,17 @@ def read_capital(path):
     return dict(role='capital', sha256=hashlib.sha256(raw).hexdigest(), hash_unchanged=True, records=records)
 
 
+def quote_mode_valid(record, window):
+    if not window:
+        return record.get('batch_test_mode')==1 and record.get('test_mode')==1
+    mode=record.get('test_mode')
+    return (type(mode) is int and mode in (0,1) and record.get('batch_test_mode')==mode
+            and (mode==1 or record.get('parent_test_mode')==0))
+
+
 def adapt(ranking_db, *, trade_date, cutoff_at, environment, evidence=None,
-          turnover_db=None, capital_json=None, test_mode=False, synthetic=False):
+          turnover_db=None, capital_json=None, test_mode=False, synthetic=False,
+          observation_policy=None, master_db=None):
     day, cutoff = date.fromisoformat(trade_date), am.instant(cutoff_at)
     if cutoff.date() != day or not '09:20' <= cutoff.strftime('%H:%M') <= '09:50':
         raise ValueError('invalid_adapter_cutoff')
@@ -116,6 +126,10 @@ def adapt(ranking_db, *, trade_date, cutoff_at, environment, evidence=None,
     document = dict(schema_version=am.INPUT_SCHEMA if synthetic else am.ADAPTER_INPUT_SCHEMA,
                     source_kind=source, trade_date=trade_date, environment=environment, market='KRX',
                     selection_cutoff_at=cutoff.isoformat(), rankings=[], securities={})
+    if observation_policy is not None:
+        document['observation_policy']=observation_policy
+    window=timing.from_document(document)
+    deadline=window.deadline(cutoff) if window else cutoff
     diagnostics, usable_records = [], []
     scope = dict(source_kind=source, environment=environment, market='KRX')
 
@@ -131,7 +145,7 @@ def adapt(ranking_db, *, trade_date, cutoff_at, environment, evidence=None,
                 or proof.get('market_time_verified') is not True):
             reject(record, 'verification_scope_mismatch'); return None
         observed, received = am.timestamp(proof.get('observed_at')), am.timestamp(proof.get('received_at'))
-        if not (observed and received and observed.date() == day and received.date() == day and observed <= received <= cutoff):
+        if not timing.available(window,observed,received,cutoff):
             reject(record, 'verification_time_outside_cutoff'); return None
         am.label(proof.get('evidence_reference'))
         stored_end = record.get('request_finished_at') or record.get('response_received_at')
@@ -175,15 +189,18 @@ def adapt(ranking_db, *, trade_date, cutoff_at, environment, evidence=None,
             started = am.timestamp(record.get('collected_at'))
             if (record.get('environment') != environment or record.get('test_mode') != int(test_mode)
                     or record.get('status') != 'success' or record.get('api_id') != 'ka00198' or record.get('qry_tp') != '1'
-                    or not started or started.date() != day or started > cutoff):
+                    or not started or started.date() != day or started > deadline):
                 reject(record, 'ranking_scope_status_or_day_mismatch'); continue
             proof = proof_for(record, bundle['sha256'])
             if not proof: continue
             observed = am.instant(proof['observed_at'])
             planned = am.timestamp(record.get('scheduled_at')) if record.get('scheduled_at') else started
             slot = planned.strftime('%H:%M') if planned else None
-            if (slot not in am.SLOTS or planned.date() != day or observed.strftime('%H:%M') != slot
-                    or started.strftime('%H:%M') != slot or started > am.instant(proof['received_at'])):
+            slot_ok=(timing.near(window,observed,proof['received_at'],planned)
+                     and timing.near(window,started,proof['received_at'],planned)) if window and planned else (
+                     observed.strftime('%H:%M')==slot and started.strftime('%H:%M')==slot)
+            if (slot not in am.SLOTS or planned.date() != day or not slot_ok or planned>cutoff
+                    or started > am.instant(proof['received_at'])):
                 reject(record, 'scheduled_and_actual_minute_mismatch'); continue
             stocks = record['stocks']
             if record['record_count'] != len(stocks) or len(stocks) != 20:
@@ -211,7 +228,7 @@ def adapt(ranking_db, *, trade_date, cutoff_at, environment, evidence=None,
                                     or record.get('batch_collection_id') != record.get('collection_id')
                                     or record.get('batch_api_id') != record.get('api_id')
                                     or record.get('batch_status') not in ('success', 'partial')
-                                    or record.get('batch_test_mode') != 1 or record.get('test_mode') != 1):
+                                    or not quote_mode_valid(record,window)):
                 reject(record, 'quote_parent_mismatch'); continue
             if kind in ('quote', 'turnover', 'capital') and (record.get('http_status') != 200 or record.get('return_code') != 0):
                 reject(record, 'source_request_not_successful'); continue
@@ -261,8 +278,11 @@ def adapt(ranking_db, *, trade_date, cutoff_at, environment, evidence=None,
         unavailable_sources=[s for s, path in [('turnover', turnover_db), ('capital', capital_json)] if path is None],
         rejected=diagnostics, accepted=usable_records, verification='externally_reviewed_manifest_required',
         ranking_test_mode=test_mode, automatic_delivery_enabled=False)
+    if master_db is not None:
+        from .am_master_adapter import enrich
+        enrich(document,master_db,synthetic=synthetic)
     # Run the existing engine contract now, so malformed duplicates never escape.
-    briefing.analyze(document, generated_at=cutoff.isoformat())
+    briefing.analyze(document, generated_at=deadline.isoformat())
     return document
 
 
@@ -272,6 +292,8 @@ def main(argv=None):
     parser.add_argument('--turnover-db', type=Path)
     parser.add_argument('--capital-json', type=Path)
     parser.add_argument('--evidence', type=Path)
+    parser.add_argument('--master-db', type=Path)
+    parser.add_argument('--timing-policy', type=Path)
     parser.add_argument('--date', required=True)
     parser.add_argument('--cutoff', required=True)
     parser.add_argument('--environment', choices=('mock', 'real'), required=True)
@@ -283,7 +305,8 @@ def main(argv=None):
         manifest = json.loads(args.evidence.read_text(encoding='utf-8')) if args.evidence else None
         document = adapt(args.ranking_db, trade_date=args.date, cutoff_at=args.cutoff, environment=args.environment,
                          evidence=manifest, turnover_db=args.turnover_db, capital_json=args.capital_json,
-                         test_mode=args.test_mode, synthetic=args.synthetic)
+                         test_mode=args.test_mode, synthetic=args.synthetic,master_db=args.master_db,
+                         observation_policy=json.loads(args.timing_policy.read_text(encoding='utf-8')) if args.timing_policy else None)
         report = briefing.analyze(document)
         briefing.write_reports(report, args.name)
         print(json.dumps(dict(status='dry_run', sectors=len(report['sectors']), source_kind=report['source_kind'],

@@ -8,6 +8,7 @@ from pathlib import Path
 
 from . import am_momentum as am
 from . import telegram_briefing as tg
+from . import am_time_policy as timing
 
 SCHEMA = 'am-sector-briefing-v1'
 EOK = Decimal('100000000')
@@ -20,15 +21,20 @@ def latest(document, code, kind, cutoff):
     value can never substitute for morning cumulative turnover.
     """
     values = []
+    window = timing.from_document(document)
     for item in document.get('securities', {}).get(code, {}).get(kind, []):
         observed, received = am.timestamp(item.get('observed_at')), am.timestamp(item.get('received_at'))
         if not (observed and received and observed.date() == cutoff.date()
-                and observed <= received <= cutoff
+                and timing.available(window,observed,received,cutoff)
                 and item.get('environment') == document['environment']
                 and item.get('market') == document['market']
                 and item.get('source_kind') == document['source_kind'] and item.get('verified') is True):
             continue
-        if observed.strftime('%H:%M') != cutoff.strftime('%H:%M'):
+        if window and kind=='market_cap' and item.get('cache_ttl_seconds') is not None:
+            current = window.cached_capital(observed,received,cutoff,item['cache_ttl_seconds'])
+        else:
+            current = timing.near(window,observed,received,cutoff)
+        if not current:
             continue
         if kind == 'names':
             value = am.label(item.get('value'))
@@ -54,7 +60,9 @@ def analyze(document, *, generated_at=None):
     base = am.analyze(document, generated_at=generated_at)
     tg.validate(base)
     cutoff = am.instant(base['selection_cutoff_at'])
-    full = base['completeness']['top20_complete'] and base['completeness']['accepted_slots'] == list(am.SLOTS)
+    window = timing.from_document(document)
+    required = base['completeness']['expected_slots'] if window else list(am.SLOTS)
+    full = base['completeness']['top20_complete'] and base['completeness']['accepted_slots'] == required
     candidates, groups = [], {}
     for row in base['rows']:
         code = row['stock_code']
@@ -124,6 +132,9 @@ def analyze(document, *, generated_at=None):
                               ambiguous_sector='hold', stale_metrics='hold', validated_optimal_strategy=False),
                   sectors=sectors[:3], held_sectors=held_sectors, candidates=candidates, analysis=base,
                   input_document=json.loads(am.canonical(document)))
+    if window:
+        result.update(observation_policy=window.document(),decision_deadline_at=window.deadline(cutoff).isoformat(),
+                      observation_phase='preliminary' if cutoff.strftime('%H:%M')<'09:50' else 'final')
     result['evaluation_reference'] = hashlib.sha256(am.canonical(result).encode()).hexdigest()
     return result
 
@@ -137,7 +148,7 @@ def turnover_comparison(document, code, cutoff, current):
     for item in document.get('securities', {}).get(code, {}).get('turnover', []):
         observed, received = am.timestamp(item.get('observed_at')), am.timestamp(item.get('received_at'))
         value = am.number(item.get('value'))
-        if (observed and received and observed.date() == cutoff.date() and observed <= received <= cutoff
+        if (timing.available(timing.from_document(document),observed,received,cutoff)
                 and observed < am.instant(current['observed_at']) and item.get('verified') is True
                 and item.get('source_kind') == document['source_kind']
                 and item.get('environment') == document['environment'] and item.get('market') == document['market']
@@ -178,6 +189,9 @@ def format_telegram(report):
     source_text = '합성 테스트 데이터' if report['source_kind'] == 'fixture' else '읽기 전용 수집 자료 검토'
     lines = [f'아르비스 오전 브리핑. {clock} 기준.',
              f'{source_text}. {environment}. 관측 기반 관심 후보입니다.']
+    if report.get('observation_policy'):
+        deadline = am.instant(report['decision_deadline_at'])
+        lines.append(f"{'예비' if report['observation_phase']=='preliminary' else '최종'} 탐색. {deadline.strftime('%H:%M:%S')}까지 수신된 자료 반영.")
     if report['completeness']['missing_slots']:
         lines.append('관측 누락: ' + ', '.join(s.replace(':', '시 ')+'분' for s in report['completeness']['missing_slots']) + '.')
     if not report['sectors']:

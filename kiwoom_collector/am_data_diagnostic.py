@@ -8,6 +8,7 @@ import re
 import sqlite3
 
 from . import am_input_adapter as adapter, am_momentum as am, am_briefing as briefing
+from . import am_time_policy as timing
 
 SCHEMA = 'am-data-diagnostic-v1'
 QUOTE_KEY = ('batch_id', 'collection_id', 'rank', 'requested_code', 'api_id', 'request_id', 'attempt')
@@ -71,7 +72,7 @@ def extras(path, role):
     return result
 
 
-def proof_for(record, source, manifest, day, cutoff, environment):
+def proof_for(record, source, manifest, day, cutoff, environment, window=None):
     """Return independently declared evidence only if its binding/scope agrees."""
     proof = manifest.get('records', {}).get(adapter.fingerprint(record), {})
     if not isinstance(proof, dict): return None
@@ -80,7 +81,7 @@ def proof_for(record, source, manifest, day, cutoff, environment):
             and proof.get('environment') == environment and proof.get('market') == 'KRX'
             and proof.get('trade_date') == day.isoformat() and proof.get('market_verified') is True
             and proof.get('market_time_verified') is True and observed and received
-            and observed.date() == received.date() == day and observed <= received <= cutoff):
+            and timing.available(window,observed,received,cutoff)):
         return None
     end = record.get('request_finished_at') or record.get('response_received_at')
     start = record.get('request_started_at')
@@ -92,8 +93,10 @@ def proof_for(record, source, manifest, day, cutoff, environment):
 
 
 def diagnose(ranking_db, *, trade_date, cutoff_at, environment, turnover_db=None, capital_json=None,
-             evidence=None, test_mode=False, synthetic=False):
+             evidence=None, test_mode=False, synthetic=False, observation_policy=None, master_db=None):
     day, cutoff = date.fromisoformat(trade_date), am.instant(cutoff_at)
+    window=timing.from_document({'observation_policy':observation_policy})
+    deadline=window.deadline(cutoff) if window else cutoff
     if cutoff.date() != day or not '09:20' <= cutoff.strftime('%H:%M') <= '09:50' or environment not in ('mock', 'real'):
         raise ValueError('invalid_diagnostic_scope')
     if type(synthetic) is not bool or type(test_mode) is not bool: raise ValueError('invalid_diagnostic_mode')
@@ -118,7 +121,8 @@ def diagnose(ranking_db, *, trade_date, cutoff_at, environment, turnover_db=None
                 and r.get('test_mode') == int(test_mode) and r.get('api_id') == 'ka00198' and r.get('qry_tp') == '1'
                 and am.timestamp(r.get('collected_at')) and am.instant(r['collected_at']).date() == day]
     slots, target_codes = [], set()
-    for slot in am.SLOTS:
+    expected_slots=[s for s in am.SLOTS if not window or am.instant(trade_date+'T'+s+':00+09:00')<=cutoff]
+    for slot in expected_slots:
         attempts = [r for r in selected if (stamp(r.get('scheduled_at')) or stamp(r.get('collected_at')))[11:16] == slot]
         successful = [r for r in attempts if r.get('status') == 'success']
         row = dict(slot=slot, attempt_count=len(attempts), success_count=len(successful), stored_top20_complete=False,
@@ -137,16 +141,21 @@ def diagnose(ranking_db, *, trade_date, cutoff_at, environment, turnover_db=None
             row.update(collection_started_at=stamp(record['collected_at']), scheduled_at=stamp(record.get('scheduled_at')),
                        stored_top20_complete=complete)
             if not complete: row['missing_evidence'].append('top20_incomplete_or_duplicate')
-            proof = proof_for(record, sources['ranking'], manifest, day, cutoff, environment)
-            if proof and am.instant(proof['observed_at']).strftime('%H:%M') == slot and am.instant(record['collected_at']).strftime('%H:%M') == slot:
+            proof = proof_for(record, sources['ranking'], manifest, day, cutoff, environment,window)
+            anchor=am.instant(trade_date+'T'+slot+':00+09:00')
+            slot_ok=(proof and timing.near(window,proof['observed_at'],proof['received_at'],anchor)
+                     and timing.near(window,record['collected_at'],proof['received_at'],anchor))
+            if slot_ok:
                 row.update(observed_at=stamp(proof['observed_at']), response_received_at=stamp(proof['received_at']),
                            verified_top20_complete=complete)
             else: row['missing_evidence'].append('ranking_observation_or_receipt_unverified')
         slots.append(row)
 
     quotes = []
+    morning_parents={r['id'] for r in selected if (stamp(r.get('scheduled_at')) or stamp(r.get('collected_at')))[11:16] in expected_slots}
     for record in rankings:
         if record['kind'] != 'quote' or record.get('environment') != environment or record.get('parent_test_mode') != int(test_mode): continue
+        if window and record.get('collection_id') not in morning_parents: continue
         started = am.timestamp(record.get('request_started_at'))
         if not started or started.date() != day: continue
         stock = code(record.get('requested_code'))
@@ -158,7 +167,12 @@ def diagnose(ranking_db, *, trade_date, cutoff_at, environment, turnover_db=None
         api = record.get('api_id') if record.get('api_id') in ('ka10007','ka10095') else None
         raw_at = market_time(detail.get('dt'), detail.get('cntr_tm')) if api == 'ka10095' else market_time(detail.get('date') or record.get('date'), detail.get('tm') or record.get('tm'))
         if not raw_at: issues.append('per_stock_market_time_missing')
-        elif am.instant(raw_at).date() != day or am.instant(raw_at) > cutoff: issues.append('market_time_wrong_day_or_after_cutoff')
+        elif not timing.available(window,raw_at,raw_at,cutoff): issues.append('market_time_wrong_day_or_after_cutoff')
+        if window and raw_at:
+            parent=next((r for r in selected if r['id']==record.get('collection_id')),None)
+            anchor=(parent.get('scheduled_at') or parent['collected_at']) if parent else None
+            if not anchor or not timing.near(window,raw_at,record.get('request_finished_at'),anchor):
+                issues.append('outside_observation_window')
         if detail.get('stk_cd') is not None and detail.get('stk_cd') != stock: issues.append('raw_stock_code_mismatch')
         if stock.endswith(('_NX','_AL')): issues.append('code_market_scope_mismatch')
         if record.get('date') or record.get('tm'):
@@ -169,11 +183,11 @@ def diagnose(ranking_db, *, trade_date, cutoff_at, environment, turnover_db=None
             issues.append('stored_and_raw_market_values_disagree')
         if (record.get('parent_code') != stock or record.get('parent_environment') != environment
                 or record.get('batch_collection_id') != record.get('collection_id') or record.get('batch_api_id') != api
-                or record.get('batch_status') not in ('success','partial') or record.get('batch_test_mode') != 1 or record.get('test_mode') != 1):
+                or record.get('batch_status') not in ('success','partial') or not adapter.quote_mode_valid(record,window)):
             issues.append('quote_parent_or_batch_mismatch')
         if record.get('status') != 'success' or record.get('http_status') != 200 or record.get('return_code') != 0:
             issues.append('quote_request_not_successful')
-        proof = proof_for(record, sources['ranking'], manifest, day, cutoff, environment)
+        proof = proof_for(record, sources['ranking'], manifest, day, cutoff, environment,window)
         if not proof: issues.append('quote_observation_or_receipt_unverified')
         elif raw_at != stamp(proof['observed_at']): issues.append('market_time_does_not_match_review')
         units = proof.get('units', {}) if proof else {}
@@ -208,7 +222,7 @@ def diagnose(ranking_db, *, trade_date, cutoff_at, environment, turnover_db=None
         for page in additional['turnover']['pages']:
             if page['run_id'] != run['id']: continue
             records=[r for r in sources['turnover']['records'] if r['run_id']==run['id'] and r['page_no']==page['page_no']]
-            proofs=[proof_for(r,sources['turnover'],manifest,day,cutoff,environment) for r in records]
+            proofs=[proof_for(r,sources['turnover'],manifest,day,cutoff,environment,window) for r in records]
             received=stamp(page.get('finished_at')) if records and all(proofs) else None
             issues=[] if received else ['run_response_receipt_unverified']
             if page.get('status')!='success' or page.get('http_status')!=200 or page.get('return_code')!=0:
@@ -232,11 +246,12 @@ def diagnose(ranking_db, *, trade_date, cutoff_at, environment, turnover_db=None
         try:
             document = adapter.adapt(ranking_db, trade_date=trade_date, cutoff_at=cutoff_at, environment=environment,
                 evidence=manifest, turnover_db=turnover_db if 'turnover' in sources else None,
-                capital_json=capital_json if 'capital' in sources else None, test_mode=test_mode, synthetic=synthetic)
+                capital_json=capital_json if 'capital' in sources else None, test_mode=test_mode, synthetic=synthetic,
+                observation_policy=observation_policy,master_db=master_db)
             expected_hashes = {r: s['sha256'] for r,s in sources.items()}
             actual_hashes = {s['role']: s['sha256'] for s in document['adapter_diagnostics']['source_summaries']}
             if expected_hashes != actual_hashes: raise ValueError('source_changed')
-            report = briefing.analyze(document, generated_at=cutoff.isoformat()); adapter_state = 'validated'
+            report = briefing.analyze(document, generated_at=deadline.isoformat()); adapter_state = 'validated'
             rejected = Counter(d['reason'] for d in document['adapter_diagnostics']['rejected'])
             missing.extend(dict(section='adapter', reason=reason, count=count) for reason,count in sorted(rejected.items()))
         except (ValueError, KeyError, TypeError, OSError, sqlite3.Error, ArithmeticError, AttributeError, RuntimeError):
@@ -245,7 +260,7 @@ def diagnose(ranking_db, *, trade_date, cutoff_at, environment, turnover_db=None
     for candidate in report['candidates'] if report else []:
         metrics = candidate['metrics']
         current_quotes = [q for q in quotes if q['stock_code']==candidate['stock_code'] and q['raw_market_observed_at']
-                          and am.instant(q['raw_market_observed_at']).strftime('%H:%M')==cutoff.strftime('%H:%M')]
+                          and timing.near(window,q['raw_market_observed_at'],q['response_received_at'],cutoff)]
         candidates.append(dict(stock_code=candidate['stock_code'], engine_status=candidate['status'],
             price_connected=any(q['verified'] for q in current_quotes), turnover_connected=metrics['turnover'] is not None,
             capital_connected=metrics['market_cap'] is not None, sector_connected=candidate['sector'] is not None,
@@ -265,6 +280,11 @@ def diagnose(ranking_db, *, trade_date, cutoff_at, environment, turnover_db=None
         am_selection=dict(adapter_state=adapter_state, engine_sector_count=len(report['sectors']) if report else 0,
                           ready_for_verified_briefing=ready, candidates=candidates), missing_evidence=missing)
     result['summary'] = summarize(result)
+    if window:
+        result.update(observation_policy=window.document(),decision_deadline_at=deadline.isoformat())
+    if master_db is not None and report:
+        result['master_diagnostics']=document.get('master_diagnostics',{})
+        result['capital']['source_present']=True
     result['evaluation_reference'] = adapter.fingerprint(result)
     return result
 
@@ -274,7 +294,7 @@ def summarize(report):
     verified = sum(s['verified_top20_complete'] for s in report['ranking_slots'])
     lines = ['AM 실데이터 진단. '+report['trade_date']+' '+report['environment']+' KRX.',
              '합성 테스트 데이터입니다.' if report['source_kind']=='fixture' else '읽기 전용 진단입니다. 시장 검증 완료를 의미하지 않습니다.',
-             f'0198 저장 TOP20 완전 슬롯 {stored}/4. 시각까지 검증된 슬롯 {verified}/4.',
+             f"0198 저장 TOP20 완전 슬롯 {stored}/{len(report['ranking_slots'])}. 시각까지 검증된 슬롯 {verified}/{len(report['ranking_slots'])}.",
              f"시세 {len(report['quotes'])}개. 검증 통과 {sum(q['verified'] for q in report['quotes'])}개.",
              f"0186 당일 수집 회차 {len(report['turnover_runs'])}개. 시총 연결 {report['capital']['connected_stock_count']}종목.",
              f"섹터 연결 {report['sectors']['connected_stock_count']}종목. 엔진 후보 섹터 {report['am_selection']['engine_sector_count']}개.",
@@ -292,6 +312,7 @@ def summarize(report):
 
 
 def reason_label(reason):
+    if reason=='outside_observation_window': return '설정한 오전 관측 허용 범위 밖임'
     labels = dict(source_not_provided='소스 미제공', source_unavailable_busy_or_schema_invalid='소스 접근 불가 또는 저장 구조 불일치',
         successful_slot_missing='성공 관측 없음', duplicate_successful_slot='성공 관측 중복',
         top20_incomplete_or_duplicate='TOP20 부족 또는 중복', ranking_observation_or_receipt_unverified='관심도 관측·수신 시각 미검증',
@@ -347,6 +368,7 @@ def main(argv=None):
     parser.add_argument('--ranking-db',required=True,type=Path)
     parser.add_argument('--turnover-db',type=Path);parser.add_argument('--capital-json',type=Path)
     parser.add_argument('--evidence',type=Path);parser.add_argument('--date',required=True)
+    parser.add_argument('--master-db',type=Path);parser.add_argument('--timing-policy',type=Path)
     parser.add_argument('--cutoff',required=True);parser.add_argument('--environment',required=True,choices=('mock','real'))
     parser.add_argument('--test-mode',action='store_true');parser.add_argument('--synthetic',action='store_true')
     parser.add_argument('--name',required=True);parser.add_argument('--format',choices=('summary','json'),default='summary')
@@ -354,7 +376,8 @@ def main(argv=None):
     try:
         evidence=json.loads(args.evidence.read_text(encoding='utf-8')) if args.evidence else None
         report=diagnose(args.ranking_db,trade_date=args.date,cutoff_at=args.cutoff,environment=args.environment,
-            turnover_db=args.turnover_db,capital_json=args.capital_json,evidence=evidence,test_mode=args.test_mode,synthetic=args.synthetic)
+            turnover_db=args.turnover_db,capital_json=args.capital_json,evidence=evidence,test_mode=args.test_mode,synthetic=args.synthetic,
+            master_db=args.master_db,observation_policy=json.loads(args.timing_policy.read_text(encoding='utf-8')) if args.timing_policy else None)
         write_reports(report,args.name)
         print(json.dumps(report,ensure_ascii=True) if args.format=='json' else report['summary'])
         return 0 if report['am_selection']['ready_for_verified_briefing'] else 2

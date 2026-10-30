@@ -12,6 +12,7 @@ from .bubble_core import unique_stocks, complete
 from .cross_analysis import timestamp, number
 from .client import KST
 from .quotes import CODE
+from . import am_time_policy as timing
 
 SCHEMA = 'am-momentum-review-v1'
 INPUT_SCHEMA = 'am-momentum-fixture-v1'
@@ -66,10 +67,12 @@ def analyze(document, *, generated_at=None):
     if env not in ('mock', 'real') or market not in ('KRX', 'NXT', 'SOR') or (env == 'mock' and market != 'KRX'):
         raise ValueError('explicit_environment_and_market_required')
     cutoff = instant(document.get('selection_cutoff_at', day.isoformat()+'T09:50:00+09:00'))
+    window = timing.from_document(document)
+    deadline = window.deadline(cutoff) if window else cutoff
     if cutoff.date() != day or not '09:20' <= cutoff.strftime('%H:%M') <= '09:50':
         raise ValueError('invalid_am_cutoff')
     generated = instant(generated_at or datetime.now(KST).isoformat())
-    if generated < cutoff:
+    if generated < deadline:
         raise ValueError('generation_before_cutoff')
     expected = [s for s in SLOTS if instant(day.isoformat()+'T'+s+':00+09:00') <= cutoff]
     diagnostics, accepted, seen = [], [], set()
@@ -81,8 +84,7 @@ def analyze(document, *, generated_at=None):
     def usable(item):
         scope(item)
         observed, received = timestamp(item.get('observed_at')), timestamp(item.get('received_at'))
-        return bool(observed and received and observed.date() == day and received.date() == day
-                    and observed <= received <= cutoff)
+        return timing.available(window,observed,received,cutoff)
 
     for index, snapshot in enumerate(document.get('rankings', [])):
         scope(snapshot)
@@ -91,7 +93,10 @@ def analyze(document, *, generated_at=None):
             diagnostics.append(dict(input_index=index, reason='ranking_time_missing_or_outside_cutoff'))
             continue
         observed = instant(snapshot['observed_at'])
-        if slot not in expected or observed < instant(day.isoformat()+'T'+slot+':00+09:00') or observed.strftime('%H:%M') != slot:
+        anchor = instant(day.isoformat()+'T'+slot+':00+09:00') if slot in expected else None
+        valid_slot = (timing.near(window, observed, snapshot['received_at'], anchor) if window and anchor
+                      else bool(anchor and observed >= anchor and observed.strftime('%H:%M') == slot))
+        if not valid_slot:
             diagnostics.append(dict(input_index=index, reason='invalid_or_late_slot'))
             continue
         if snapshot.get('api_id') != 'ka00198' or snapshot.get('qry_tp') != '1' or snapshot.get('status') != 'success':
@@ -206,6 +211,8 @@ def analyze(document, *, generated_at=None):
                   completeness=dict(expected_slots=expected, accepted_slots=[s['slot'] for s in accepted],
                                     missing_slots=[s for s in expected if s not in seen], top20_complete=full),
                   diagnostics=diagnostics, rows=rows)
+    if window:
+        result.update(observation_policy=window.document(),decision_deadline_at=deadline.isoformat())
     result['evaluation_reference'] = hashlib.sha256(canonical(result).encode('utf-8')).hexdigest()
     return result
 
