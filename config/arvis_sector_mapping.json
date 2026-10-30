@@ -1,0 +1,23 @@
+{
+  "schema_version": "arvis-sector-mapping-v1",
+  "version": "c11-exact-v1",
+  "sectors": ["반도체", "자동차", "로봇", "원전·전력", "조선", "방산·우주", "2차전지", "제약·바이오", "IT·AI", "금융", "화학·소재", "철강·기계", "건설·인프라", "소비재·유통", "기타"],
+  "rules": [
+    {"raw_industry": "반도체", "sector": "반도체", "reviewed": false},
+    {"raw_industry": "자동차", "sector": "자동차", "reviewed": false},
+    {"raw_industry": "로봇", "sector": "로봇", "reviewed": false},
+    {"raw_industry": "전력", "sector": "원전·전력", "reviewed": false},
+    {"raw_industry": "조선", "sector": "조선", "reviewed": false},
+    {"raw_industry": "방산", "sector": "방산·우주", "reviewed": false},
+    {"raw_industry": "2차전지", "sector": "2차전지", "reviewed": false},
+    {"raw_industry": "의약품", "sector": "제약·바이오", "reviewed": false},
+    {"raw_industry": "소프트웨어", "sector": "IT·AI", "reviewed": false},
+    {"raw_industry": "은행", "sector": "금융", "reviewed": false},
+    {"raw_industry": "증권", "sector": "금융", "reviewed": false},
+    {"raw_industry": "화학", "sector": "화학·소재", "reviewed": false},
+    {"raw_industry": "철강금속", "sector": "철강·기계", "reviewed": false},
+    {"raw_industry": "건설업", "sector": "건설·인프라", "reviewed": false},
+    {"raw_industry": "유통업", "sector": "소비재·유통", "reviewed": false}
+  ],
+  "security_reviews": {}
+}

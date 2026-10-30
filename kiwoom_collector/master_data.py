@@ -91,6 +91,15 @@ class Queries:
     def __init__(self, db):
         self.db = db
 
+    def catalog_info(self,stock_code,*,at):
+        """Optional C11 extension; old C10 databases retain their contract."""
+        if not self.db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='catalog_items'").fetchone():
+            return None
+        row=self.db.execute('''SELECT i.*,r.applied_at FROM catalog_items i JOIN catalog_runs r ON r.run_id=i.run_id
+            WHERE i.stock_code=? AND r.applied_at<=? ORDER BY r.applied_at DESC,r.rowid DESC LIMIT 1''',
+            (code(stock_code),instant(at).isoformat())).fetchone()
+        return dict(row) if row else None
+
     def stock(self, stock_code, *, at):
         code(stock_code); at = instant(at).isoformat()
         rows = self.db.execute('SELECT record_json,registered_at FROM stock_history WHERE stock_code=? AND registered_at<=? ORDER BY registered_at DESC,id DESC', (stock_code,at)).fetchall()
@@ -100,8 +109,16 @@ class Queries:
         if len({digest(r) for r in latest}) != 1:
             return dict(state='conflict',stock_code=stock_code)
         value = latest[0]
-        return dict(value, state='active' if value['verified'] and value['listing_status']=='listed'
+        result=dict(value, state='active' if value['verified'] and value['listing_status']=='listed'
                     and value['market'] in ('KOSPI','KOSDAQ') else 'inactive_or_unverified')
+        catalog=self.catalog_info(stock_code,at=at)
+        if catalog:
+            result.update(security_type=catalog['security_type'],security_type_verified=bool(catalog['type_verified']),
+                raw_industry=catalog['raw_industry'],catalog_updated_at=catalog['updated_at'])
+            if not catalog['present']: result['state']='catalog_missing_review'
+            elif not catalog['type_verified']: result['state']='catalog_security_review'
+            elif catalog['security_type']!='common_stock': result['state']='catalog_security_excluded'
+        return result
 
     def classification(self, stock_code, *, at, kind='industry'):
         at = instant(at).isoformat()
@@ -118,6 +135,18 @@ class Queries:
         tags = [r for r in latest.values() if r['status']=='verified' and r['active']
                 and r['valid_from']<=at and (r['valid_to'] is None or r['valid_to']>at)]
         candidates = [r for r in tags if r['kind']==kind]
+        catalog=self.catalog_info(stock_code,at=at)
+        if catalog and kind=='industry':
+            newer_manual=[r for r in candidates if not r['source'].startswith('ka10099_mapping:') and r['registered_at']>catalog['applied_at']]
+            if newer_manual:
+                primary=[r for r in newer_manual if r['is_primary']]
+                chosen=primary[0] if len(primary)==1 else newer_manual[0] if len(newer_manual)==1 else None
+                in_taxonomy=bool(chosen and self.db.execute('SELECT 1 FROM catalog_taxonomy WHERE sector_id=?',(chosen['sector_id'],)).fetchone())
+                return dict(state='classified' if in_taxonomy else 'conflict',tags=tags,primary=chosen if in_taxonomy else None)
+            primary=next((r for r in candidates if r['sector_id']==catalog['representative_sector_id']),None)
+            if catalog['mapping_state'] not in ('mapped','preserved_manual'):
+                return dict(state='unclassified' if catalog['mapping_state']=='unclassified' else 'conflict',tags=tags,primary=None)
+            return dict(state='classified' if primary else 'conflict',tags=tags,primary=primary)
         primary = [r for r in candidates if r['is_primary']]
         selected = primary[0] if len(primary)==1 else candidates[0] if len(candidates)==1 else None
         state = 'classified' if selected else 'conflict' if candidates else 'unclassified'

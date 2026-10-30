@@ -1,0 +1,43 @@
+{
+  "schema_version": "ka10099-fixture-v1",
+  "synthetic": true,
+  "environment": "mock",
+  "description": "Synthetic stock rows and continuation keys only; not a captured Kiwoom response.",
+  "pages": [
+    {
+      "request": {"mrkt_tp": "0", "cont-yn": "", "next-key": ""},
+      "response": {
+        "http_status": 200,
+        "headers": {"cont-yn": "Y", "next-key": "fixture-next-1"},
+        "started_at": "2026-10-30T16:00:00+09:00", "received_at": "2026-10-30T16:00:01+09:00",
+        "body": {"return_code": 0, "list": [
+          {"code": "000001", "name": "합성반도체", "marketCode": "0", "marketName": "코스피", "upName": "반도체", "regDay": "20200102", "state": "정상", "companyClassName": ""},
+          {"code": "000002", "name": "합성금융", "marketCode": "0", "marketName": "코스피", "upName": "은행", "regDay": "20210104", "state": "정상", "companyClassName": ""}
+        ]}
+      }
+    },
+    {
+      "request": {"mrkt_tp": "0", "cont-yn": "Y", "next-key": "fixture-next-1"},
+      "response": {
+        "http_status": 200,
+        "headers": {"cont-yn": "N", "next-key": ""},
+        "started_at": "2026-10-30T16:00:02+09:00", "received_at": "2026-10-30T16:00:03+09:00",
+        "body": {"return_code": 0, "list": [
+          {"code": "000003", "name": "합성미분류", "marketCode": "0", "marketName": "코스피", "upName": "", "regDay": "20220103", "state": "관리종목", "companyClassName": ""}
+        ]}
+      }
+    },
+    {
+      "request": {"mrkt_tp": "10", "cont-yn": "", "next-key": ""},
+      "response": {
+        "http_status": 200,
+        "headers": {"cont-yn": "N", "next-key": ""},
+        "started_at": "2026-10-30T16:00:05+09:00", "received_at": "2026-10-30T16:00:06+09:00",
+        "body": {"return_code": 0, "list": [
+          {"code": "0035S0", "name": "합성로봇", "marketCode": "10", "marketName": "코스닥", "upName": "로봇", "regDay": "20230102", "state": "정상", "companyClassName": ""},
+          {"code": "000004", "name": "합성인수목적회사", "marketCode": "10", "marketName": "코스닥", "upName": "기타", "regDay": "20240102", "state": "정상", "companyClassName": "기업인수목적회사"}
+        ]}
+      }
+    }
+  ]
+}
