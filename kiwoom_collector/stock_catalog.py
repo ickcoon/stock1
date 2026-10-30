@@ -421,7 +421,7 @@ def _run_directory(name):
     return path
 
 
-def main(argv=None):
+def main(argv=None, *, token_provider_factory=None):
     parser=argparse.ArgumentParser(description=__doc__)
     sub=parser.add_subparsers(dest='command',required=True)
     auth=sub.add_parser('auth-check',help='Read-only credential check; no OAuth or DB writes')
@@ -485,7 +485,14 @@ def main(argv=None):
             from .api_resource import api_resource
             from .stock_catalog_live import ListTransport
             resources.enter_context(api_resource(path,args.environment))
-            if args.credentials_env_file:
+            if token_provider_factory is not None:
+                if args.environment != 'real' or args.credentials_env_file:
+                    raise CatalogError('invalid_interactive_auth_scope')
+                provider=token_provider_factory()
+                resources.callback(provider.close)
+                token=provider.get_token(minimum_valid_seconds=limits.seconds+30)
+                time.sleep(limits.spacing_seconds)
+            elif args.credentials_env_file:
                 from .catalog_auth import credentials,OAuthProvider
                 selected=credentials(args.credentials_env_file,environment=args.environment)
                 provider=OAuthProvider(selected,approved=args.oauth_approved,token_impact_reviewed=args.token_impact_reviewed)

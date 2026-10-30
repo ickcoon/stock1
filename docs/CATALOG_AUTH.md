@@ -1,5 +1,38 @@
 # C11-B 인증 재사용 및 데이터 출처
 
+## PowerShell 5.1 실전 숨김 입력 CLI
+
+기존 here-string + `python -c` 실행 예시 대신 독립 모듈을 사용한다.
+아래는 별도 승인 이후의 실행 명령이며 테스트 중에는 실제 실행하지 않는다.
+
+```powershell
+Set-Location C:\Users\dada1\Downloads\stock1-dev
+.\.venv\Scripts\python.exe -B -m kiwoom_collector.catalog_real --execute-approved --oauth-approved --quota-reviewed
+```
+
+ASCII 명령과 입력 안내를 사용하므로 셸에 Python 한글 문자열·따옴표를 전달하지 않는다.
+App Key와 Secret Key는 getpass로 숨김 입력한다. 숨김 입력을 지원하지 않으면 중단한다.
+운영 stock1/.env는 읽기 전용으로 참조하며 mock 선언·App Key 비교가 불가능하거나
+입력한 실전 App Key가 운영 App Key와 같으면 OAuth 전에 중단한다.
+
+기존 Credentials(environment=real), OAuthProvider, 종목 수집 CLI를 재사용한다.
+토큰은 Python 객체로 직접 전달하여 임시 환경변수나 인증 파일도 만들지 않는다.
+DB 검증·장 종료 제한·실행 이름 중복 검사·개발 DB 단위 잠금을 통과한 뒤에만
+숨김 입력과 OAuth를 수행한다. 인증 실패 시 재시도·모의 전환은 없다.
+계정별 호출 한도는 별도 검토 대상이다.
+
+개발 diagnostics/master/c10-master.db만 대상이며 OAuth 최대 1회, ka10099만
+시장별 최대 50페이지, 수집 단계 300초, 자동 재시도 0회를 고정한다.
+시장별 50페이지이므로 두 시장 합계 상한은 100페이지다. OAuth·DB 게시까지
+합친 전체 프로세스의 300초 제한을 의미하지 않는다. 운영 코드·DB·스케줄러·
+프로세스는 변경하지 않는다. 키·토큰은 보고서나 Git에 저장하지 않는다.
+승인 플래그 없는 실행과 --help는 인증정보 입력·OAuth를 수행하지 않는다.
+
+수정 검증: Windows PowerShell 5.1에서 모듈 --help 실행 성공, 신규 합성 테스트
+9개 PASS, 전체 회귀 1,047개 PASS (180.910초). 이 합성 검증 중 실제 OAuth·ka10099 호출은 0회다.
+이후 사용자의 최초 실전 실행은 response_market_mismatch로 실패했다.
+실행 메타데이터와 다음 조사 방향은 [병원 종료 인계](HANDOFF_20261030_C11.md)를 참조한다.
+
 ## 이번 검증 범위
 
 기존 `config.Credentials`와 `client.KiwoomClient.authenticate`를 재사용한다.
