@@ -45,8 +45,9 @@ DDL=(
 
 
 class CatalogError(ValueError):
-    def __init__(self, reason):
+    def __init__(self, reason, *, market_diagnostic=None):
         self.reason=reason
+        self.market_diagnostic=market_diagnostic
         super().__init__(reason)
 
 
@@ -94,7 +95,25 @@ def parse_row(row, market):
                 listing_date=listing,raw_state=raw['state'],market_code=raw['marketCode'],market_name=raw['marketName'],raw=raw)
 
 
-def _page(envelope, market):
+def _market_counts(rows):
+    """Fixed vocabulary only: never serialize arbitrary server strings or objects."""
+    counts={}
+    for row in rows:
+        if not isinstance(row,dict): bucket='invalid_row'
+        elif 'marketCode' not in row: bucket='missing'
+        else:
+            value=row['marketCode']
+            if not isinstance(value,str): bucket='non_string'
+            elif value in MARKETS: bucket=value
+            elif not value: bucket='empty'
+            elif value.strip(' \t\r\n') in MARKETS: bucket='ascii_whitespace'
+            elif value in ('00','000','010'): bucket='zero_padded'
+            else: bucket='other'
+        counts[bucket]=counts.get(bucket,0)+1
+    return counts
+
+
+def _page(envelope, market, page_no=1):
     if not isinstance(envelope,dict) or envelope.get('http_status')!=200: raise CatalogError('http_failed')
     body=envelope.get('body')
     if not isinstance(body,dict) or type(body.get('return_code')) not in (int,str) or str(body['return_code'])!='0':
@@ -111,7 +130,13 @@ def _page(envelope, market):
     if continuation!='Y' and key: raise CatalogError('terminal_key_conflict')
     start,received=master.instant(envelope.get('started_at')),master.instant(envelope.get('received_at'))
     if start>received or start.date()!=received.date(): raise CatalogError('invalid_page_interval')
-    rows=[parse_row(r,market) for r in body['list']]
+    try:
+        rows=[parse_row(r,market) for r in body['list']]
+    except CatalogError as error:
+        # Keep strict identity validation; no evidence supports code coercion.
+        raise CatalogError(error.reason,market_diagnostic=dict(request_market=market,
+            response_market_counts=_market_counts(body['list']),page_no=page_no,
+            failure_stage='row_validation')) from None
     return rows,continuation=='Y',key,start.isoformat(),received.isoformat()
 
 
@@ -139,7 +164,7 @@ def collect(transport, *, environment, synthetic, limits=Limits(), clock=time.mo
             except CatalogError: raise
             except Exception: raise CatalogError('transport_failed') from None
             if clock()>=deadline: raise CatalogError('collection_deadline')
-            data,has_more,next_key,started,received=_page(envelope,market)
+            data,has_more,next_key,started,received=_page(envelope,market,page_no)
             if pages and master.instant(started)<master.instant(pages[-1]['received_at']):
                 raise CatalogError('nonmonotonic_page_times')
             for row in data:
@@ -427,7 +452,7 @@ def main(argv=None, *, token_provider_factory=None):
     auth=sub.add_parser('auth-check',help='Read-only credential check; no OAuth or DB writes')
     auth.add_argument('--credentials-env-file',required=True,type=Path)
     auth.add_argument('--environment',required=True,choices=('mock','real'))
-    for command in ('plan','fixture','collect'):
+    for command in ('plan','fixture','collect','probe'):
         p=sub.add_parser(command)
         p.add_argument('--db',type=Path,required=True);p.add_argument('--environment',choices=('mock','real'),required=True)
         p.add_argument('--rules',type=Path,default=DEFAULT_RULES)
@@ -436,7 +461,7 @@ def main(argv=None, *, token_provider_factory=None):
         p.add_argument('--maximum-drop-fraction',type=float,default=0.2)
         if command!='plan': p.add_argument('--name',required=True)
         if command=='fixture': p.add_argument('--input',type=Path,required=True)
-        if command=='collect':
+        if command in ('collect','probe'):
             p.add_argument('--execute-approved',action='store_true');p.add_argument('--quota-reviewed',action='store_true')
             p.add_argument('--token-env',default='STOCK1_KIWOOM_ACCESS_TOKEN')
             p.add_argument('--credentials-env-file',type=Path)
@@ -461,7 +486,7 @@ def main(argv=None, *, token_provider_factory=None):
                 environment=args.environment,maximum_query_attempts=limits.max_pages*2,request_spacing_seconds=limits.spacing_seconds,
                 automatic_retries=0,oauth_calls=0,api_calls=0,publication='both_markets_complete_then_one_transaction')))
             return 0
-        if args.command=='collect':
+        if args.command in ('collect','probe'):
             if not args.execute_approved or not args.quota_reviewed: raise CatalogError('approval_and_quota_review_required')
             from .stock_catalog_live import after_close
             after_close(datetime.now(timezone.utc))
@@ -502,18 +527,27 @@ def main(argv=None, *, token_provider_factory=None):
             else:
                 token=os.environ.get(args.token_env,'')
             transport=ListTransport(token,environment=args.environment,approved=True)
-            dataset=collect(transport,environment=args.environment,synthetic=False,limits=limits)
+            if args.command=='probe':
+                # One page, one market, no continuation, dataset or publication.
+                envelope=transport(market='0',cont_yn='',next_key='',remaining_seconds=limits.seconds)
+                _page(envelope,'0',1)
+                audit.update(status='diagnostic_complete',success=True)
+            else:
+                dataset=collect(transport,environment=args.environment,synthetic=False,limits=limits)
         # Disk errors in staging abort BEFORE any master writes.
-        (run/'dataset.json').write_text(json.dumps(dataset,ensure_ascii=False,indent=2),encoding='utf-8')
-        report=publish(path,dataset,rules=rules,limits=limits)
-        audit.update(database_updated=True,run_id=report['run_id'])
-        (run/'changes.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
-        audit.update(status='success',success=True,collected_counts=report['collected_counts'])
-        audit.update(origin.metadata(args.environment,dataset['data_origin']))
+        if args.command!='probe':
+            (run/'dataset.json').write_text(json.dumps(dataset,ensure_ascii=False,indent=2),encoding='utf-8')
+            report=publish(path,dataset,rules=rules,limits=limits)
+            audit.update(database_updated=True,run_id=report['run_id'])
+            (run/'changes.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
+            audit.update(status='success',success=True,collected_counts=report['collected_counts'])
+            audit.update(origin.metadata(args.environment,dataset['data_origin']))
     except (ValueError,KeyError,TypeError,OSError,sqlite3.Error,KeyboardInterrupt) as error:
         reason=error.reason if isinstance(error,(CatalogError,AuthBridgeError)) else 'local_scope_schema_or_io_failed'
         audit=audit or dict(success=False,database_updated=False,started_at=now())
         audit.update(status='published_report_error' if audit['database_updated'] else 'failed',reason=reason)
+        if isinstance(error,CatalogError) and error.market_diagnostic is not None:
+            audit['market_diagnostic']=error.market_diagnostic
         if isinstance(error,KeyboardInterrupt): audit.update(status='cancelled',reason='user_cancelled')
     finally:
         if transport is not None and hasattr(transport,'close'): transport.close()

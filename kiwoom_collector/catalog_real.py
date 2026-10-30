@@ -45,12 +45,14 @@ def main(argv=None):
     parser.add_argument('--execute-approved', action='store_true')
     parser.add_argument('--oauth-approved', action='store_true')
     parser.add_argument('--quota-reviewed', action='store_true')
+    parser.add_argument('--diagnose-once', action='store_true',
+                        help='One KOSPI page only; no continuation or database publication')
     parser.add_argument('--name', default='c11-real-' + datetime.now().strftime('%Y%m%d-%H%M%S-%f'))
     args = parser.parse_args(argv)
     if not (args.execute_approved and args.oauth_approved and args.quota_reviewed):
         parser.error('requires --execute-approved --oauth-approved --quota-reviewed')
     return stock_catalog.main([
-        'collect', '--db', str(DEFAULT_DB), '--environment', 'real',
+        'probe' if args.diagnose_once else 'collect', '--db', str(DEFAULT_DB), '--environment', 'real',
         '--name', args.name, '--execute-approved', '--quota-reviewed',
         '--max-pages', '50', '--seconds', '300',
     ], token_provider_factory=prompted_provider)

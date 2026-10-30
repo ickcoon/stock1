@@ -95,6 +95,43 @@ class StockCatalogTests(unittest.TestCase):
         with self.assertRaisesRegex(c.CatalogError,'continuation_loop'):self.dataset(doc)
         with self.assertRaisesRegex(c.CatalogError,'page_limit_incomplete'):self.dataset(limits=c.Limits(max_pages=1,minimum_per_market=1))
 
+    def test_market_failure_diagnostic_counts_entire_page_without_secrets(self):
+        doc=deepcopy(self.fixture)
+        page=doc['pages'][1]['response']
+        template=page['body']['list'][0]
+        values=['0','10','',None,0,' 0','010','PRIVATE_SECRET', '9'*501]
+        page['body']['list']=[dict(template,marketCode=value,token='PRIVATE_SECRET') for value in values]
+        missing=dict(template);missing.pop('marketCode')
+        page['body']['list'].extend([missing, 'PRIVATE_SECRET'])
+        with self.assertRaises(c.CatalogError) as caught:self.dataset(doc)
+        diagnostic=caught.exception.market_diagnostic
+        self.assertEqual(diagnostic,dict(request_market='0',page_no=2,failure_stage='row_validation',
+            response_market_counts={'0':1,'10':1,'empty':1,'non_string':2,
+                'ascii_whitespace':1,'zero_padded':1,'other':2,'missing':1,'invalid_row':1}))
+        self.assertNotIn('PRIVATE_SECRET',json.dumps(diagnostic))
+
+    def test_market_failure_preserves_published_master_and_no_partial_dataset(self):
+        self.publish()
+        before=self.path.read_bytes()
+        for label,value in (('mismatch','0'),('missing',None),('mixed','0')):
+            doc=self.shifted()
+            row=doc['pages'][2]['response']['body']['list'][0]
+            if label=='missing':row.pop('marketCode')
+            else:row['marketCode']=value
+            source=self.root/(label+'.json');source.write_text(json.dumps(doc),encoding='utf-8')
+            with patch.object(c,'publish') as publish,redirect_stdout(io.StringIO()) as output:
+                result=c.main(['fixture','--db',str(self.path),'--environment','mock',
+                    '--input',str(source),'--rules',str(RULES),'--name',label])
+            self.assertEqual(result,2);publish.assert_not_called()
+            audit=json.loads(output.getvalue())
+            self.assertEqual(audit['market_diagnostic']['request_market'],'10')
+            self.assertEqual(audit['market_diagnostic']['page_no'],1)
+            self.assertEqual(audit['query_attempts'],3)
+            self.assertFalse(audit['database_updated'])
+            self.assertEqual(audit['automatic_retries'],0)
+            self.assertFalse((self.root/'runs'/label/'dataset.json').exists())
+            self.assertEqual(self.path.read_bytes(),before)
+
     def test_minimum_empty_market_deadline_and_limits(self):
         with self.assertRaisesRegex(c.CatalogError,'market_count_below_minimum'):
             self.dataset(limits=c.Limits(minimum_per_market=3))

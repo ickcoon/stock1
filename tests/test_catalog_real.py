@@ -109,6 +109,44 @@ class RealCatalogTests(unittest.TestCase):
         self.assertEqual(denied.returncode, 2)
         self.assertNotIn(b'Real App Key (hidden)', denied.stdout+denied.stderr)
 
+    def test_diagnose_once_routes_to_probe(self):
+        with patch.object(catalog,'main',return_value=0) as run:
+            self.assertEqual(cli.main(FLAGS+['--diagnose-once']),0)
+        self.assertEqual(run.call_args.args[0][0],'probe')
+
+    def test_probe_single_call_never_publishes_even_with_continuation_or_failure(self):
+        fixture=Path(__file__).parent/'fixtures'/'ka10099_synthetic.json'
+        for mode in ('valid','mismatch','audit_io'):
+            with self.subTest(mode=mode), patch.multiple(master_data,PROJECT=self.root,MASTER_ROOT=self.root/'master'), \
+                    patch.object(catalog,'RUN_ROOT',self.root/'runs'):
+                db=master_data.create_master('probe_'+mode,synthetic=False,at='2026-10-29T08:00:00+09:00')
+                before=db.read_bytes()
+                envelope=json.loads(fixture.read_text(encoding='utf-8'))['pages'][0]['response']
+                if mode=='mismatch':envelope['body']['list'][0]['marketCode']='10'
+                transport=Mock(calls=1,return_value=envelope)
+                provider=Mock(oauth_calls=1);provider.get_token.return_value='PRIVATE_TOKEN'
+                writes=Path.write_text
+                def write(path,*args,**kwargs):
+                    if mode=='audit_io' and path.name=='manifest.json' and path.exists():
+                        raise OSError('PRIVATE_TOKEN')
+                    return writes(path,*args,**kwargs)
+                with patch('kiwoom_collector.stock_catalog_live.after_close'), \
+                        patch('kiwoom_collector.stock_catalog_live.ListTransport',return_value=transport), \
+                        patch.object(catalog.time,'sleep'),patch.object(catalog,'publish') as publish, \
+                        patch.object(Path,'write_text',new=write),redirect_stdout(io.StringIO()) as output:
+                    result=catalog.main(['probe','--db',str(db),'--environment','real',
+                        '--name',mode,'--execute-approved','--quota-reviewed'],
+                        token_provider_factory=lambda:provider)
+                self.assertEqual(result,0 if mode=='valid' else 2)
+                transport.assert_called_once_with(market='0',cont_yn='',next_key='',remaining_seconds=300)
+                publish.assert_not_called();provider.close.assert_called_once();transport.close.assert_called_once()
+                audit=json.loads(output.getvalue())
+                self.assertEqual(audit['actual_api_calls'],1);self.assertEqual(audit['oauth_calls'],1)
+                self.assertFalse(audit['database_updated']);self.assertEqual(audit['automatic_retries'],0)
+                self.assertNotIn('PRIVATE_TOKEN',output.getvalue())
+                self.assertEqual(db.read_bytes(),before)
+                self.assertEqual([p.name for p in (self.root/'runs'/mode).iterdir()],['manifest.json'])
+
     def test_after_close_guard_and_provider_not_called_in_daytime(self):
         with self.assertRaises(catalog.CatalogError):
             after_close(datetime.fromisoformat('2026-10-30T10:00:00+09:00'))
