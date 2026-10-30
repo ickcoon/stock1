@@ -9,7 +9,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
-from unittest.mock import Mock, patch
+from unittest.mock import ANY, Mock, patch
 
 from kiwoom_collector import catalog_real as cli, stock_catalog as catalog, master_data
 from kiwoom_collector.catalog_auth import AuthBridgeError
@@ -95,7 +95,7 @@ class RealCatalogTests(unittest.TestCase):
                     '--name', 'memory-only', '--execute-approved', '--quota-reviewed',
                     '--max-pages', '50', '--seconds', '300'], token_provider_factory=factory)
             self.assertEqual(result, 2)
-            live.assert_called_once_with('SYNTHETIC_PRIVATE_TOKEN', environment='real', approved=True)
+            live.assert_called_once_with('SYNTHETIC_PRIVATE_TOKEN', environment='real', approved=True,time_policy=ANY)
             provider.get_token.assert_called_once_with(minimum_valid_seconds=330)
             provider.close.assert_called_once(); transport.close.assert_called_once()
             self.assertNotIn('SYNTHETIC_PRIVATE_TOKEN', output.getvalue())

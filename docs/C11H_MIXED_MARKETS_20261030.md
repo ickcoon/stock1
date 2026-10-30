@@ -57,7 +57,7 @@ unrecognized/invalid_row로 분류한다. 숫자 코드를 표시하는 것과 �
    Get-FileHash .\diagnostics\master\c10-master.db -Algorithm SHA256
    ```
 
-2. 한국시간 16:00 이상 23:50 미만인지, 개발 DB와 운영 DB가 분리됐는지, 별도 실전 키와
+2. [C11-I 시간 정책](C11I_TIME_POLICY_20261031.md)의 허용 시각인지, 개발 DB와 운영 DB가 분리됐는지, 별도 실전 키와
    호출 한도·토큰 영향 승인이 있는지 확인한다. 장 마감 가드는 휴장/특별장 달력을 대신하지 않는다.
    기존 운영 mock 키 확인 경로가 유효해야 한다. 보호 조건을 제거하지 않는다.
 

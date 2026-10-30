@@ -85,6 +85,7 @@ def main(argv=None):
                         help='One KOSPI page only; no continuation or database publication')
     parser.add_argument('--prepare-db',action='store_true',
                         help='Offline: create missing development master or validate existing DB; then exit')
+    parser.add_argument('--time-policy',type=Path,help='Local catalog time policy JSON; no clock override')
     parser.add_argument('--name', default='c11-real-' + datetime.now().strftime('%Y%m%d-%H%M%S-%f'))
     args = parser.parse_args(argv)
     if args.prepare_db and (args.diagnose_once or args.execute_approved or args.oauth_approved or args.quota_reviewed):
@@ -111,7 +112,7 @@ def main(argv=None):
         'probe' if args.diagnose_once else 'collect', '--db', str(DEFAULT_DB), '--environment', 'real',
         '--name', args.name, '--execute-approved', '--quota-reviewed',
         '--max-pages', '50', '--seconds', '300',
-    ], token_provider_factory=prompted_provider)
+    ]+(['--time-policy',str(args.time_policy)] if args.time_policy else []), token_provider_factory=prompted_provider)
 
 
 if __name__ == '__main__':

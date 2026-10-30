@@ -495,6 +495,7 @@ def main(argv=None, *, token_provider_factory=None):
         if command!='plan': p.add_argument('--name',required=True)
         if command=='fixture': p.add_argument('--input',type=Path,required=True)
         if command in ('collect','probe'):
+            p.add_argument('--time-policy',type=Path)
             p.add_argument('--execute-approved',action='store_true');p.add_argument('--quota-reviewed',action='store_true')
             p.add_argument('--token-env',default='STOCK1_KIWOOM_ACCESS_TOKEN')
             p.add_argument('--credentials-env-file',type=Path)
@@ -522,7 +523,12 @@ def main(argv=None, *, token_provider_factory=None):
         if args.command in ('collect','probe'):
             if not args.execute_approved or not args.quota_reviewed: raise CatalogError('approval_and_quota_review_required')
             from .stock_catalog_live import after_close
-            after_close(datetime.now(timezone.utc))
+            from .catalog_time_policy import load,TimePolicyError
+            try:
+                policy=load(args.time_policy) if args.time_policy else load()
+            except TimePolicyError:
+                raise CatalogError('invalid_catalog_time_policy') from None
+            after_close(datetime.now(timezone.utc),policy=policy)
             if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*',args.token_env): raise CatalogError('invalid_token_variable_name')
             if args.credentials_env_file and (not args.oauth_approved or not args.token_impact_reviewed):
                 raise CatalogError('oauth_approval_and_token_impact_review_required')
@@ -548,6 +554,7 @@ def main(argv=None, *, token_provider_factory=None):
                     raise CatalogError('invalid_interactive_auth_scope')
                 provider=token_provider_factory()
                 resources.callback(provider.close)
+                after_close(datetime.now(timezone.utc),policy=policy)
                 token=provider.get_token(minimum_valid_seconds=limits.seconds+30)
                 time.sleep(limits.spacing_seconds)
             elif args.credentials_env_file:
@@ -555,11 +562,12 @@ def main(argv=None, *, token_provider_factory=None):
                 selected=credentials(args.credentials_env_file,environment=args.environment)
                 provider=OAuthProvider(selected,approved=args.oauth_approved,token_impact_reviewed=args.token_impact_reviewed)
                 resources.callback(provider.close)
+                after_close(datetime.now(timezone.utc),policy=policy)
                 token=provider.get_token(minimum_valid_seconds=limits.seconds+30)
                 time.sleep(limits.spacing_seconds)  # Pace OAuth -> first query too.
             else:
                 token=os.environ.get(args.token_env,'')
-            transport=ListTransport(token,environment=args.environment,approved=True)
+            transport=ListTransport(token,environment=args.environment,approved=True,time_policy=policy)
             if args.command=='probe':
                 # One page, one market, no continuation, dataset or publication.
                 envelope=transport(market='0',cont_yn='',next_key='',remaining_seconds=limits.seconds)

@@ -1,21 +1,21 @@
 """Future approved ka10099 only. Existing token injection; no OAuth or retries."""
 import json
 import time
-from datetime import timezone,timedelta
+from datetime import datetime,timezone
 
 from .stock_catalog import API_ID,API_PATH,MARKETS,CatalogError
 
 
-def after_close(at):
-    # Operational guard, not an exchange holiday/special-session calendar.
-    if at.tzinfo is None: raise CatalogError('aware_timestamp_required')
-    local=at.astimezone(timezone(timedelta(hours=9)))
-    if not 16<=local.hour<=23 or (local.hour==23 and local.minute>=50):
-        raise CatalogError('after_close_window_required')
+def after_close(at,*,policy=None):
+    from .catalog_time_policy import load,TimePolicyError
+    try:
+        (policy or load()).check(at)
+    except TimePolicyError as error:
+        raise CatalogError(str(error)) from None
 
 
 class ListTransport:
-    def __init__(self,token,*,environment,approved=False,session=None):
+    def __init__(self,token,*,environment,approved=False,session=None,time_policy=None):
         if approved is not True or environment not in ('mock','real'):
             raise CatalogError('explicit_live_approval_required')
         if not isinstance(token,str) or not token or len(token)>4096 or any(c.isspace() for c in token):
@@ -26,8 +26,11 @@ class ListTransport:
         self._session=session;self._token=token
         self._host={'mock':'https://mockapi.kiwoom.com','real':'https://api.kiwoom.com'}[environment]
         self.calls=0;self.last_http_status=None
+        self._time_policy=time_policy
 
     def __call__(self,*,market,cont_yn,next_key,remaining_seconds):
+        if self._time_policy is not None:
+            after_close(datetime.now(timezone.utc),policy=self._time_policy)
         if market not in MARKETS or cont_yn not in ('','Y') or not isinstance(next_key,str) or len(next_key)>50:
             raise CatalogError('disallowed_request')
         if bool(next_key)!=(cont_yn=='Y') or remaining_seconds<=0:

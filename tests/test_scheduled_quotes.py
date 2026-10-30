@@ -89,7 +89,7 @@ class ScheduledQuotesTests(fixtures.QuoteFixture):
         self.assertEqual(self.session.post.call_count,10)
 
     def test_quote_failure_does_not_change_ranking_or_stop_next_slot(self):
-        at=self.at.replace(hour=9,minute=20,second=0)
+        at=datetime(2026,10,26,9,20,tzinfo=KST)  # Synthetic Monday, independent of test-run weekday.
         clock=[at]
         with closing(fixtures.Store(Path(self.path.parent)/'flow.db')) as store:
             client=Mock()
@@ -288,7 +288,7 @@ except ValueError:
         for index,kind in enumerate(('success','failure','empty')):
             folder=Path(self.path.parent)/kind
             with closing(fixtures.Store(folder/'db.sqlite')) as store:
-                at=self.at.replace(hour=9,minute=20,second=0)
+                at=datetime(2026,10,26,9,20,tzinfo=KST)
                 client=Mock()
                 client.fetch_once.side_effect=KiwoomError('fake') if kind=='failure' else None
                 client.fetch_once.return_value=Snapshot(at,[] if kind=='empty' else [dict(bigd_rank='1',stk_cd='100001',stk_nm='One')])
@@ -301,7 +301,7 @@ except ValueError:
                         self.assertEqual(followup.call_args.args[2],identifier)
 
     def test_scheduler_to_fake_http_end_to_end(self):
-        at=self.at.replace(hour=9,minute=20,second=0)
+        at=datetime(2026,10,26,9,20,tzinfo=KST)
         # Before market open the simulated clock is ahead of the real token clock.
         self.client.token=fixtures.Token('token',max(self.at,at)+timedelta(hours=1))
         with closing(fixtures.Store(Path(self.path.parent)/'scheduled.db')) as store:

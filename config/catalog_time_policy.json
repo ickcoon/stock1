@@ -1,0 +1,7 @@
+{
+  "schema_version": "catalog-time-policy-v1",
+  "weekday_start": "16:00",
+  "allow_weekends": true,
+  "verified_holidays": [],
+  "maintenance_windows": []
+}
