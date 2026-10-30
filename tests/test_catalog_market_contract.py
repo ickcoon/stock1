@@ -19,17 +19,25 @@ class MarketContractTests(unittest.TestCase):
                 for field, value in row.items():
                     self.assertEqual(parsed['raw'][field], value)
 
-    def test_other_market_missing_empty_padding_and_whitespace_fail_closed(self):
-        for market, values in (('0', ('10', '', '00', ' 0', '0 ')),
-                               ('10', ('0', '', '010', ' 10', '10 '))):
+    def test_missing_empty_padding_and_whitespace_fail_closed(self):
+        for market, values in (('0', ('00', ' 0', '0 ')),
+                               ('10', ('010', ' 10', '10 '))):
             for value in values:
                 with self.subTest(market=market, value=value):
-                    with self.assertRaisesRegex(CatalogError, '^response_market_mismatch$'):
+                    with self.assertRaisesRegex(CatalogError, '^invalid_response_market_code$'):
                         parse_row(dict(self.row, marketCode=value), market)
         row = dict(self.row)
         del row['marketCode']
-        with self.assertRaisesRegex(CatalogError, '^response_market_mismatch$'):
+        with self.assertRaisesRegex(CatalogError, '^missing_response_market_code$'):
             parse_row(row, '0')
+        with self.assertRaisesRegex(CatalogError, '^missing_response_market_code$'):
+            parse_row(dict(self.row,marketCode=''),'0')
+
+    def test_request_and_response_market_are_independent(self):
+        parsed=parse_row(dict(self.row,marketCode='10'),'0')
+        self.assertEqual((parsed['request_market'],parsed['market_code'],parsed['market']),('0','10','KOSDAQ'))
+        parsed=parse_row(dict(self.row,marketCode='99'),'0')
+        self.assertEqual((parsed['request_market'],parsed['market_code'],parsed['market']),('0','99','UNKNOWN'))
 
     def test_non_string_rejected_before_market_comparison(self):
         for value in (0, 10, None, False, [], {}):

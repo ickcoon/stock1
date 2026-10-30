@@ -121,6 +121,7 @@ class Queries:
                 raw_industry=catalog['raw_industry'],catalog_updated_at=catalog['updated_at'],
                 server_environment=catalog['server_environment'],data_origin=catalog['data_origin'])
             if catalog['data_origin']=='unverified': result['state']='catalog_origin_unverified'
+            elif catalog['market']=='UNKNOWN': result['state']='catalog_market_unclassified'
             elif not catalog['present']: result['state']='catalog_missing_review'
             elif not catalog['type_verified']: result['state']='catalog_security_review'
             elif catalog['security_type']!='common_stock': result['state']='catalog_security_excluded'

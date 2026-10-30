@@ -37,6 +37,9 @@ DDL=(
  mapping_state TEXT NOT NULL,representative_sector_id TEXT,updated_at TEXT NOT NULL,source TEXT NOT NULL,
  PRIMARY KEY(run_id,stock_code))''',
 '''CREATE INDEX IF NOT EXISTS idx_catalog_items_code ON catalog_items(stock_code,run_id)''',
+'''CREATE TABLE IF NOT EXISTS catalog_request_scope(run_id TEXT NOT NULL,stock_code TEXT NOT NULL,
+ request_market TEXT NOT NULL CHECK(request_market IN('0','10')),
+ PRIMARY KEY(run_id,stock_code),FOREIGN KEY(run_id,stock_code) REFERENCES catalog_items(run_id,stock_code))''',
 '''CREATE TABLE IF NOT EXISTS catalog_pages(run_id TEXT NOT NULL REFERENCES catalog_runs(run_id),market TEXT NOT NULL,page_no INTEGER NOT NULL,
  row_count INTEGER NOT NULL,started_at TEXT NOT NULL,received_at TEXT NOT NULL,has_more INTEGER NOT NULL,
  continuation_fingerprint TEXT NOT NULL,PRIMARY KEY(run_id,market,page_no))''',
@@ -84,14 +87,17 @@ def parse_row(row, market):
     try: master.code(raw['code'])
     except ValueError: raise CatalogError('invalid_stock_code') from None
     if not raw['name'].strip(): raise CatalogError('missing_stock_name')
-    if raw['marketCode']!=market: raise CatalogError('response_market_mismatch')
+    if not raw['marketCode']: raise CatalogError('missing_response_market_code')
+    if not re.fullmatch(r'(?:0|[1-9][0-9]{0,2})',raw['marketCode'],re.ASCII):
+        raise CatalogError('invalid_response_market_code')
     listing=None
     if raw['regDay']:
         try:
             listing=datetime.strptime(raw['regDay'],'%Y%m%d').date().isoformat()
             if len(raw['regDay'])!=8: raise ValueError()
         except ValueError: raise CatalogError('invalid_listing_date') from None
-    return dict(stock_code=raw['code'],stock_name=raw['name'],market=MARKETS[market],raw_industry=raw['upName'],
+    return dict(stock_code=raw['code'],stock_name=raw['name'],request_market=market,
+                market=MARKETS.get(raw['marketCode'],'UNKNOWN'),raw_industry=raw['upName'],
                 listing_date=listing,raw_state=raw['state'],market_code=raw['marketCode'],market_name=raw['marketName'],raw=raw)
 
 
@@ -111,6 +117,24 @@ def _market_counts(rows):
             else: bucket='other'
         counts[bucket]=counts.get(bucket,0)+1
     return counts
+
+
+def market_profile(rows):
+    """Bounded numeric code/name distribution; no arbitrary server text."""
+    names={'코스피','코스닥','KOSPI','KOSDAQ','ETF','ETN','리츠','REIT','스팩','SPAC','코넥스','KONEX','K-OTC'}
+    counts={}
+    for row in rows:
+        if not isinstance(row,dict): code='invalid_row';name='unrecognized'
+        else:
+            value=row.get('marketCode')
+            code=value if isinstance(value,str) and re.fullmatch(r'[0-9]{1,3}',value,re.ASCII) else (
+                'missing' if 'marketCode' not in row else 'empty' if value=='' else
+                'non_string' if not isinstance(value,str) else 'unrecognized')
+            value=row.get('marketName')
+            name=value if isinstance(value,str) and value in names else 'unrecognized'
+        counts[(code,name)]=counts.get((code,name),0)+1
+    return [dict(market_code=code,market_name=name,count=count)
+            for (code,name),count in sorted(counts.items())]
 
 
 def _page(envelope, market, page_no=1):
@@ -133,10 +157,9 @@ def _page(envelope, market, page_no=1):
     try:
         rows=[parse_row(r,market) for r in body['list']]
     except CatalogError as error:
-        # Keep strict identity validation; no evidence supports code coercion.
         raise CatalogError(error.reason,market_diagnostic=dict(request_market=market,
             response_market_counts=_market_counts(body['list']),page_no=page_no,
-            failure_stage='row_validation')) from None
+            failure_stage='row_validation',market_profile=market_profile(body['list']))) from None
     return rows,continuation=='Y',key,start.isoformat(),received.isoformat()
 
 
@@ -172,7 +195,8 @@ def collect(transport, *, environment, synthetic, limits=Limits(), clock=time.mo
                 seen.add(row['stock_code']);rows.append(dict(row,updated_at=received));count+=1
             if len(rows)>limits.max_rows: raise CatalogError('row_limit_exceeded')
             pages.append(dict(market=MARKETS[market],page_no=page_no,row_count=len(data),started_at=started,
-                received_at=received,has_more=has_more,continuation_fingerprint=master.digest(next_key)))
+                received_at=received,has_more=has_more,continuation_fingerprint=master.digest(next_key),
+                market_profile=market_profile(envelope['body']['list'])))
             if not has_more: break
             if next_key in keys: raise CatalogError('continuation_loop')
             keys.add(next_key);key=next_key
@@ -232,7 +256,8 @@ def map_industry(raw_industry, rules):
 
 def security_type(row, rules, at):
     review=rules.get('security_reviews',{}).get(row['stock_code'])
-    hint={'ETF':'ETF','ETN':'ETN','기업인수목적회사':'SPAC','스팩':'SPAC'}.get(row['raw']['companyClassName'],'unknown')
+    hint={'ETF':'ETF','ETN':'ETN','리츠':'REIT','REIT':'REIT','기업인수목적회사':'SPAC','스팩':'SPAC'}.get(row['raw']['companyClassName'],'unknown')
+    if row['market']=='UNKNOWN':return hint,False,'response_market_unclassified'
     if review and master.instant(review['reviewed_at'])<=master.instant(at):
         if hint!='unknown' and review['type']!=hint:
             return hint,False,'security_review_conflict'
@@ -307,18 +332,22 @@ def publish(path,dataset,*,rules,limits=Limits(),applied_at=None):
     at=master.instant(applied_at or now()).isoformat()
     if master.instant(at)<master.instant(dataset['finished_at']): raise CatalogError('publication_before_capture')
     rows=dataset['rows'];incoming={r['stock_code']:r for r in rows}
-    if len(incoming)!=len(rows) or set(r['market'] for r in rows)!=set(MARKETS.values()): raise CatalogError('invalid_dataset_scope')
+    if (len(incoming)!=len(rows) or not set(r['market'] for r in rows)<=set(MARKETS.values())|{'UNKNOWN'}
+            or {r.get('request_market') for r in rows}!=set(MARKETS)):
+        raise CatalogError('invalid_dataset_scope')
     counts={market:sum(r['market']==market for r in rows) for market in MARKETS.values()}
     if any(n<limits.minimum_per_market for n in counts.values()): raise CatalogError('market_count_below_minimum')
     if len(rows)>limits.max_rows: raise CatalogError('row_limit_exceeded')
+    if {p['market'] for p in dataset['pages']}!=set(MARKETS.values()):
+        raise CatalogError('incomplete_dataset_pages')
     for market in MARKETS.values():
         pages=[p for p in dataset['pages'] if p['market']==market]
         if (not pages or len(pages)>limits.max_pages or [p['page_no'] for p in pages]!=list(range(1,len(pages)+1))
                 or pages[-1]['has_more'] is not False or any(p['has_more'] is not True for p in pages[:-1])
-                or sum(p['row_count'] for p in pages)!=counts[market]):
+                or sum(p['row_count'] for p in pages)!=sum(MARKETS[r['request_market']]==market for r in rows)):
             raise CatalogError('incomplete_dataset_pages')
     for row in rows:
-        parsed=parse_row(row['raw'],row['market_code'])
+        parsed=parse_row(row['raw'],row['request_market'])
         if any(row[k]!=v for k,v in parsed.items()): raise CatalogError('dataset_row_mismatch')
     with master.MasterStore(path) as store:
         if store.db.execute('SELECT synthetic FROM master_meta').fetchone()[0]!=int(dataset['synthetic']):
@@ -348,6 +377,7 @@ def publish(path,dataset,*,rules,limits=Limits(),applied_at=None):
             collected_counts=counts,after_counts={},changes={},mapping_counts={},missing_possible=[],
             complete_pagination=True,universe_completeness='no_authoritative_total_in_response',
             source_api_id=API_ID,applied_at=at)
+        report['unclassified_market_count']=sum(r['market']=='UNKNOWN' for r in rows)
         report.update(origin.metadata(dataset['environment'],data_origin))
         store.db.execute('''INSERT INTO catalog_runs(run_id,environment,synthetic,started_at,finished_at,applied_at,
             dataset_sha256,rules_sha256,report_json,data_origin) VALUES(?,?,?,?,?,?,?,?,?,?)''',(run_id,dataset['environment'],int(dataset['synthetic']),
@@ -363,17 +393,20 @@ def publish(path,dataset,*,rules,limits=Limits(),applied_at=None):
             if old is None: change(row['stock_code'],'added',{'market':row['market']})
             else:
                 if old['stock_name']!=row['stock_name']: change(row['stock_code'],'name_changed',{'before':old['stock_name'],'after':row['stock_name']})
-                if old['market']!=row['market']: change(row['stock_code'],'market_transferred',{'before':old['market'],'after':row['market']})
-            listing_known=bool(row['listing_date'] and row['listing_date']<=row['updated_at'][:10])
+                if old['market']!=row['market'] and row['market']!='UNKNOWN':
+                    change(row['stock_code'],'market_transferred',{'before':old['market'],'after':row['market']})
+            listing_known=bool(row['market']!='UNKNOWN' and row['listing_date'] and row['listing_date']<=row['updated_at'][:10])
             listing_status='listed' if listing_known else 'unknown'
-            if old is None or any((old['stock_name']!=row['stock_name'],old['market']!=row['market'],
-                                   old['listing_status']!=listing_status,bool(old['verified'])!=listing_known)):
+            if (old is None or row['market']!='UNKNOWN') and (old is None or any((old['stock_name']!=row['stock_name'],old['market']!=row['market'],
+                                   old['listing_status']!=listing_status,bool(old['verified'])!=listing_known))):
                 store.put_stock(row['stock_code'],row['stock_name'],row['market'],listing_status,source='ka10099:'+dataset['environment'],
                     updated_at=row['updated_at'],registered_at=at,verified=listing_known)
             kind,verified,evidence=security_type(row,rules,at)
-            mapping,target=_assignment(store,row,rules,ids,at)
+            mapping,target=('review_needed',None) if row['market']=='UNKNOWN' else _assignment(store,row,rules,ids,at)
             report['mapping_counts'][mapping]=report['mapping_counts'].get(mapping,0)+1
             _insert_item(store,run_id,row,True,kind,verified,evidence,mapping,target)
+            store.db.execute('INSERT INTO catalog_request_scope VALUES(?,?,?)',
+                             (run_id,row['stock_code'],row['request_market']))
             if prior:
                 old_item=store.db.execute('SELECT present,raw_industry FROM catalog_items WHERE run_id=? AND stock_code=?',(prior['run_id'],row['stock_code'])).fetchone()
                 if old_item and not old_item['present']: change(row['stock_code'],'reappeared',{})
@@ -530,8 +563,11 @@ def main(argv=None, *, token_provider_factory=None):
             if args.command=='probe':
                 # One page, one market, no continuation, dataset or publication.
                 envelope=transport(market='0',cont_yn='',next_key='',remaining_seconds=limits.seconds)
-                _page(envelope,'0',1)
-                audit.update(status='diagnostic_complete',success=True)
+                data,_,_,_,_=_page(envelope,'0',1)
+                if len({r['stock_code'] for r in data})!=len(data):raise CatalogError('duplicate_stock_code')
+                audit.update(status='diagnostic_complete',success=True,market_diagnostic=dict(
+                    request_market='0',page_no=1,failure_stage='none',
+                    market_profile=market_profile(envelope['body']['list'])))
             else:
                 dataset=collect(transport,environment=args.environment,synthetic=False,limits=limits)
         # Disk errors in staging abort BEFORE any master writes.

@@ -69,6 +69,48 @@ class StockCatalogTests(unittest.TestCase):
             self.assertEqual(q.stock('000001',at='2026-10-30T16:02:00+09:00')['state'],'active')
             self.assertEqual(q.classification('000001',at='2026-10-30T16:02:00+09:00')['primary']['sector_name'],'반도체')
 
+    def test_mixed_fixture_publishes_independent_request_scope_and_unclassified_market(self):
+        doc=json.loads((FIXTURE.parent/'ka10099_mixed_synthetic.json').read_text(encoding='utf-8'))
+        dataset=self.dataset(doc)
+        report=self.publish(dataset)
+        self.assertEqual(report['collected_counts'],{'KOSPI':1,'KOSDAQ':2})
+        self.assertEqual(report['unclassified_market_count'],1)
+        with self.query() as (q,_):
+            row=q.catalog_info('000002',at='2026-10-30T16:02:00+09:00')
+            self.assertEqual((row['market'],row['market_code']),('KOSDAQ','10'))
+            request=q.db.execute('SELECT request_market FROM catalog_request_scope WHERE stock_code=?',('000002',)).fetchone()[0]
+            self.assertEqual(request,'0')
+            unknown=q.stock('000003',at='2026-10-30T16:02:00+09:00')
+            self.assertEqual(unknown['state'],'catalog_market_unclassified')
+            self.assertFalse(unknown['security_type_verified'])
+            row=q.catalog_info('000003',at='2026-10-30T16:02:00+09:00')
+            self.assertEqual((row['market'],row['market_code'],row['security_type']),('UNKNOWN','99','ETF'))
+            self.assertEqual(q.db.execute('SELECT count(*) FROM catalog_pages').fetchone()[0],2)
+
+    def test_unknown_response_preserves_previous_known_master_and_blocks_active_use(self):
+        self.publish()
+        doc=self.shifted();doc['pages'][0]['response']['body']['list'][0]['marketCode']='99'
+        report=self.publish(self.dataset(doc),at='2026-10-31T16:01:00+09:00')
+        self.assertNotIn('market_transferred',report['changes'])
+        with self.query() as (q,_):
+            row=q.db.execute('SELECT market,verified FROM stock_master WHERE stock_code=?',('000001',)).fetchone()
+            self.assertEqual(tuple(row),('KOSPI',1))
+            self.assertEqual(q.stock('000001',at='2026-10-31T16:02:00+09:00')['state'],'catalog_market_unclassified')
+
+    def test_profile_only_exports_numeric_codes_and_allowlisted_names(self):
+        rows=[dict(marketCode='99',marketName='PRIVATE_SECRET'),dict(marketCode='10',marketName='코스닥'),
+              dict(marketCode='PRIVATE_SECRET',marketName='PRIVATE_SECRET')]
+        result=c.market_profile(rows)
+        self.assertNotIn('PRIVATE_SECRET',json.dumps(result))
+        self.assertIn(dict(market_code='99',market_name='unrecognized',count=1),result)
+
+    def test_reit_etn_etf_spac_hints_never_imply_common_stock(self):
+        for value,kind in (('ETF','ETF'),('ETN','ETN'),('리츠','REIT'),('기업인수목적회사','SPAC')):
+            raw=dict(self.fixture['pages'][0]['response']['body']['list'][0],companyClassName=value)
+            row=c.parse_row(raw,'0')
+            self.assertEqual(c.security_type(row,dict(security_reviews={}),self.fixture['pages'][0]['response']['received_at']),
+                             (kind,False,'ka10099_type_unverified'))
+
     def test_continuation_headers_and_global_pacing(self):
         clock=Clock();source=c.FixtureTransport(self.fixture);starts=[]
         def transport(**kwargs):starts.append(clock());return source(**kwargs)
@@ -84,7 +126,7 @@ class StockCatalogTests(unittest.TestCase):
         for mutation,reason in ((lambda r:r.update(http_status=429),'http_failed'),
                 (lambda r:r['body'].update(return_code=1700),'api_failed'),
                 (lambda r:r['body'].pop('list'),'missing_or_invalid_list'),
-                (lambda r:r['body']['list'][0].update(marketCode='10'),'response_market_mismatch')):
+                (lambda r:r['body']['list'][0].update(marketCode=''),'missing_response_market_code')):
             doc=deepcopy(self.fixture);mutation(doc['pages'][0]['response'])
             with self.assertRaisesRegex(c.CatalogError,reason):self.dataset(doc)
 
@@ -105,6 +147,8 @@ class StockCatalogTests(unittest.TestCase):
         page['body']['list'].extend([missing, 'PRIVATE_SECRET'])
         with self.assertRaises(c.CatalogError) as caught:self.dataset(doc)
         diagnostic=caught.exception.market_diagnostic
+        self.assertNotIn('PRIVATE_SECRET',json.dumps(diagnostic))
+        self.assertEqual(sum(r['count'] for r in diagnostic.pop('market_profile')),11)
         self.assertEqual(diagnostic,dict(request_market='0',page_no=2,failure_stage='row_validation',
             response_market_counts={'0':1,'10':1,'empty':1,'non_string':2,
                 'ascii_whitespace':1,'zero_padded':1,'other':2,'missing':1,'invalid_row':1}))
@@ -113,7 +157,7 @@ class StockCatalogTests(unittest.TestCase):
     def test_market_failure_preserves_published_master_and_no_partial_dataset(self):
         self.publish()
         before=self.path.read_bytes()
-        for label,value in (('mismatch','0'),('missing',None),('mixed','0')):
+        for label,value in (('invalid',' 0'),('missing',None),('empty','')):
             doc=self.shifted()
             row=doc['pages'][2]['response']['body']['list'][0]
             if label=='missing':row.pop('marketCode')
