@@ -13,6 +13,8 @@ import time
 import uuid
 
 from . import master_data as master
+from . import data_origin as origin
+from .catalog_auth import AuthBridgeError
 
 API_ID='ka10099'
 API_PATH='/api/dostk/stkinfo'
@@ -158,6 +160,7 @@ def collect(transport, *, environment, synthetic, limits=Limits(), clock=time.mo
     dataset=dict(schema_version='ka10099-dataset-v1',environment=environment,synthetic=synthetic,
         source_kind='fixture' if synthetic else 'ka10099_live',started_at=pages[0]['started_at'],
         finished_at=pages[-1]['received_at'],rows=rows,pages=pages,pagination_complete=True)
+    dataset.update(origin.metadata(environment,'synthetic_fixture' if synthetic else 'api_response'))
     dataset['fingerprint']=master.digest(dataset)
     return dataset
 
@@ -274,6 +277,7 @@ def publish(path,dataset,*,rules,limits=Limits(),applied_at=None):
     if (type(dataset.get('synthetic')) is not bool or dataset.get('environment') not in ('mock','real')
             or dataset.get('source_kind')!=('fixture' if dataset['synthetic'] else 'ka10099_live')):
         raise CatalogError('invalid_dataset_scope')
+    data_origin=origin.validate_record(dataset)
     rules=rules_document(rules)
     at=master.instant(applied_at or now()).isoformat()
     if master.instant(at)<master.instant(dataset['finished_at']): raise CatalogError('publication_before_capture')
@@ -295,6 +299,10 @@ def publish(path,dataset,*,rules,limits=Limits(),applied_at=None):
         if store.db.execute('SELECT synthetic FROM master_meta').fetchone()[0]!=int(dataset['synthetic']):
             raise CatalogError('master_source_scope_mismatch')
         for sql in DDL: store.db.execute(sql)
+        columns={r[1] for r in store.db.execute('PRAGMA table_info(catalog_runs)')}
+        if 'data_origin' not in columns:
+            # Existing runs stay unverified. Do NOT infer origin from mock/real.
+            store.db.execute("ALTER TABLE catalog_runs ADD COLUMN data_origin TEXT NOT NULL DEFAULT 'unverified' CHECK(data_origin IN ('api_response','synthetic_fixture','unverified'))")
         prior=store.db.execute('SELECT * FROM catalog_runs ORDER BY applied_at DESC,rowid DESC LIMIT 1').fetchone()
         if prior and (prior['environment']!=dataset['environment'] or prior['synthetic']!=int(dataset['synthetic'])):
             raise CatalogError('catalog_environment_mismatch')
@@ -315,8 +323,10 @@ def publish(path,dataset,*,rules,limits=Limits(),applied_at=None):
             collected_counts=counts,after_counts={},changes={},mapping_counts={},missing_possible=[],
             complete_pagination=True,universe_completeness='no_authoritative_total_in_response',
             source_api_id=API_ID,applied_at=at)
-        store.db.execute('INSERT INTO catalog_runs VALUES(?,?,?,?,?,?,?,?,?)',(run_id,dataset['environment'],int(dataset['synthetic']),
-            dataset['started_at'],dataset['finished_at'],at,dataset['fingerprint'],master.digest(rules),'{}'))
+        report.update(origin.metadata(dataset['environment'],data_origin))
+        store.db.execute('''INSERT INTO catalog_runs(run_id,environment,synthetic,started_at,finished_at,applied_at,
+            dataset_sha256,rules_sha256,report_json,data_origin) VALUES(?,?,?,?,?,?,?,?,?,?)''',(run_id,dataset['environment'],int(dataset['synthetic']),
+            dataset['started_at'],dataset['finished_at'],at,dataset['fingerprint'],master.digest(rules),'{}',data_origin))
 
         def change(stock_code,action,detail):
             store.db.execute('INSERT INTO catalog_changes VALUES(?,?,?,?)',(run_id,stock_code,action,json.dumps(detail,ensure_ascii=False)))
@@ -414,6 +424,9 @@ def _run_directory(name):
 def main(argv=None):
     parser=argparse.ArgumentParser(description=__doc__)
     sub=parser.add_subparsers(dest='command',required=True)
+    auth=sub.add_parser('auth-check',help='Read-only credential check; no OAuth or DB writes')
+    auth.add_argument('--credentials-env-file',required=True,type=Path)
+    auth.add_argument('--environment',required=True,choices=('mock','real'))
     for command in ('plan','fixture','collect'):
         p=sub.add_parser(command)
         p.add_argument('--db',type=Path,required=True);p.add_argument('--environment',choices=('mock','real'),required=True)
@@ -426,9 +439,17 @@ def main(argv=None):
         if command=='collect':
             p.add_argument('--execute-approved',action='store_true');p.add_argument('--quota-reviewed',action='store_true')
             p.add_argument('--token-env',default='STOCK1_KIWOOM_ACCESS_TOKEN')
+            p.add_argument('--credentials-env-file',type=Path)
+            p.add_argument('--oauth-approved',action='store_true')
+            p.add_argument('--token-impact-reviewed',action='store_true')
     args=parser.parse_args(argv)
-    audit=None;run=None;transport=None;resources=ExitStack()
+    audit=None;run=None;transport=None;provider=None;resources=ExitStack()
     try:
+        if args.command=='auth-check':
+            from .catalog_auth import check
+            result=check(args.credentials_env_file,environment=args.environment)
+            print(json.dumps(result,ensure_ascii=True))
+            return 0 if result['ready'] else 2
         limits=Limits(max_pages=args.max_pages,seconds=args.seconds,minimum_per_market=args.minimum_per_market,
                       maximum_drop_fraction=args.maximum_drop_fraction)
         path=master.writable_path(args.db).resolve(strict=True)
@@ -445,6 +466,8 @@ def main(argv=None):
             from .stock_catalog_live import after_close
             after_close(datetime.now(timezone.utc))
             if not re.fullmatch(r'[A-Za-z_][A-Za-z0-9_]*',args.token_env): raise CatalogError('invalid_token_variable_name')
+            if args.credentials_env_file and (not args.oauth_approved or not args.token_impact_reviewed):
+                raise CatalogError('oauth_approval_and_token_impact_review_required')
         run=_run_directory(args.name)
         audit=dict(status='collecting',success=False,database_updated=False,started_at=now(),environment=args.environment,
                    synthetic=synthetic,api_id=API_ID,source_db=str(path),automatic_retries=0)
@@ -462,7 +485,16 @@ def main(argv=None):
             from .api_resource import api_resource
             from .stock_catalog_live import ListTransport
             resources.enter_context(api_resource(path,args.environment))
-            transport=ListTransport(os.environ.get(args.token_env,''),environment=args.environment,approved=True)
+            if args.credentials_env_file:
+                from .catalog_auth import credentials,OAuthProvider
+                selected=credentials(args.credentials_env_file,environment=args.environment)
+                provider=OAuthProvider(selected,approved=args.oauth_approved,token_impact_reviewed=args.token_impact_reviewed)
+                resources.callback(provider.close)
+                token=provider.get_token(minimum_valid_seconds=limits.seconds+30)
+                time.sleep(limits.spacing_seconds)  # Pace OAuth -> first query too.
+            else:
+                token=os.environ.get(args.token_env,'')
+            transport=ListTransport(token,environment=args.environment,approved=True)
             dataset=collect(transport,environment=args.environment,synthetic=False,limits=limits)
         # Disk errors in staging abort BEFORE any master writes.
         (run/'dataset.json').write_text(json.dumps(dataset,ensure_ascii=False,indent=2),encoding='utf-8')
@@ -470,8 +502,9 @@ def main(argv=None):
         audit.update(database_updated=True,run_id=report['run_id'])
         (run/'changes.json').write_text(json.dumps(report,ensure_ascii=False,indent=2),encoding='utf-8')
         audit.update(status='success',success=True,collected_counts=report['collected_counts'])
+        audit.update(origin.metadata(args.environment,dataset['data_origin']))
     except (ValueError,KeyError,TypeError,OSError,sqlite3.Error,KeyboardInterrupt) as error:
-        reason=error.reason if isinstance(error,CatalogError) else 'local_scope_schema_or_io_failed'
+        reason=error.reason if isinstance(error,(CatalogError,AuthBridgeError)) else 'local_scope_schema_or_io_failed'
         audit=audit or dict(success=False,database_updated=False,started_at=now())
         audit.update(status='published_report_error' if audit['database_updated'] else 'failed',reason=reason)
         if isinstance(error,KeyboardInterrupt): audit.update(status='cancelled',reason='user_cancelled')
@@ -480,7 +513,8 @@ def main(argv=None):
         resources.close()
         if audit is not None:
             audit.update(finished_at=now(),query_attempts=getattr(transport,'calls',0),
-                         actual_api_calls=0 if audit.get('synthetic') else getattr(transport,'calls',0))
+                         actual_api_calls=0 if audit.get('synthetic') else getattr(transport,'calls',0),
+                         oauth_calls=getattr(provider,'oauth_calls',0))
             if run:
                 try: (run/'manifest.json').write_text(json.dumps(audit,ensure_ascii=False,indent=2),encoding='utf-8')
                 except OSError: audit.update(status='audit_write_failed',success=False)

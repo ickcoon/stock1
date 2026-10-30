@@ -270,6 +270,7 @@ def diagnose(ranking_db, *, trade_date, cutoff_at, environment, turnover_db=None
                  and all(s['verified_top20_complete'] for s in slots))
     result = dict(schema_version=SCHEMA, trade_date=trade_date, selection_cutoff_at=cutoff.isoformat(), environment=environment,
         market='KRX', source_kind='fixture' if synthetic else 'readonly_diagnostic',
+        data_origin='synthetic_fixture' if synthetic else 'unverified',
         network_called=False, operational_writes=False, candidate_confirmed=False,
         sources={role:dict(sha256=s['sha256'],hash_unchanged=s['hash_unchanged'],record_count=len(s['records'])) for role,s in sources.items()},
         ranking_slots=slots, quotes=quotes, turnover_runs=runs,

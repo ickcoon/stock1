@@ -277,7 +277,8 @@ def adapt(ranking_db, *, trade_date, cutoff_at, environment, evidence=None,
         hash_unchanged=s['hash_unchanged'], record_count=len(s['records'])) for s in sources],
         unavailable_sources=[s for s, path in [('turnover', turnover_db), ('capital', capital_json)] if path is None],
         rejected=diagnostics, accepted=usable_records, verification='externally_reviewed_manifest_required',
-        ranking_test_mode=test_mode, automatic_delivery_enabled=False)
+        ranking_test_mode=test_mode, automatic_delivery_enabled=False,
+        data_origin='synthetic_fixture' if synthetic else 'unverified')
     if master_db is not None:
         from .am_master_adapter import enrich
         enrich(document,master_db,synthetic=synthetic)

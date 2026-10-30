@@ -95,10 +95,14 @@ class Queries:
         """Optional C11 extension; old C10 databases retain their contract."""
         if not self.db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='catalog_items'").fetchone():
             return None
-        row=self.db.execute('''SELECT i.*,r.applied_at FROM catalog_items i JOIN catalog_runs r ON r.run_id=i.run_id
+        row=self.db.execute('''SELECT i.*,r.applied_at,r.environment AS server_environment,r.report_json AS run_report_json
+            FROM catalog_items i JOIN catalog_runs r ON r.run_id=i.run_id
             WHERE i.stock_code=? AND r.applied_at<=? ORDER BY r.applied_at DESC,r.rowid DESC LIMIT 1''',
             (code(stock_code),instant(at).isoformat())).fetchone()
-        return dict(row) if row else None
+        if row is None:return None
+        result=dict(row)
+        result['data_origin']=json.loads(result.pop('run_report_json')).get('data_origin','unverified')
+        return result
 
     def stock(self, stock_code, *, at):
         code(stock_code); at = instant(at).isoformat()
@@ -114,8 +118,10 @@ class Queries:
         catalog=self.catalog_info(stock_code,at=at)
         if catalog:
             result.update(security_type=catalog['security_type'],security_type_verified=bool(catalog['type_verified']),
-                raw_industry=catalog['raw_industry'],catalog_updated_at=catalog['updated_at'])
-            if not catalog['present']: result['state']='catalog_missing_review'
+                raw_industry=catalog['raw_industry'],catalog_updated_at=catalog['updated_at'],
+                server_environment=catalog['server_environment'],data_origin=catalog['data_origin'])
+            if catalog['data_origin']=='unverified': result['state']='catalog_origin_unverified'
+            elif not catalog['present']: result['state']='catalog_missing_review'
             elif not catalog['type_verified']: result['state']='catalog_security_review'
             elif catalog['security_type']!='common_stock': result['state']='catalog_security_excluded'
         return result

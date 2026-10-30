@@ -211,12 +211,12 @@ class StockCatalogTests(unittest.TestCase):
         with redirect_stdout(io.StringIO()):
             result=c.main(['fixture','--db',str(self.path),'--environment','mock','--input',str(FIXTURE),'--rules',str(RULES),'--name','success'])
         self.assertEqual(result,0)
-        manifest=json.loads((self.root/'runs/success/manifest.json').read_text())
+        manifest=json.loads((self.root/'runs/success/manifest.json').read_text(encoding='utf-8'))
         self.assertTrue(manifest['success']);self.assertEqual(manifest['actual_api_calls'],0)
         with redirect_stdout(io.StringIO()):
             result=c.main(['fixture','--db',str(self.path),'--environment','mock','--input',str(FIXTURE),'--rules',str(RULES),'--name','success'])
         self.assertEqual(result,2)
-        self.assertEqual(json.loads((self.root/'runs/success/manifest.json').read_text()),manifest)
+        self.assertEqual(json.loads((self.root/'runs/success/manifest.json').read_text(encoding='utf-8')),manifest)
 
     def test_plan_and_unapproved_live_do_not_load_credentials_or_transport(self):
         real=m.create_master('empty_real',synthetic=False,at='2026-10-29T08:00:00+09:00')
