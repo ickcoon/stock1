@@ -113,6 +113,12 @@ def analyze(document, *, generated_at=None):
                              received_at=instant(snapshot['received_at']).isoformat(), stocks=stocks))
     accepted.sort(key=lambda s: s['slot'])
     all_codes = sorted(set().union(*(set(s['stocks']) for s in accepted)))
+    product_filter = document.get('candidate_filter')
+    if product_filter and (product_filter.get('version') != 'c12-am-candidate-join-v1'
+                           or instant(product_filter['at']) != cutoff):
+        raise ValueError('candidate_filter_scope_mismatch')
+    def product_allowed(code):
+        return product_filter is None or product_filter.get('decisions', {}).get(code, {}).get('state') == 'analysis_candidate'
     full = len(accepted) == len(expected) and all(complete(s['stocks'], 20) for s in accepted)
     securities = document.get('securities', {})
     for code in securities:
@@ -129,7 +135,7 @@ def analyze(document, *, generated_at=None):
                 if previous is None or instant(tag['received_at']) > instant(previous['received_at']):
                     tags[name] = dict(name=name, basis=basis, observed_at=instant(tag['observed_at']).isoformat(),
                                       received_at=instant(tag['received_at']).isoformat())
-        sectors[code] = sorted(tags.values(), key=lambda t: t['name'])
+        sectors[code] = sorted(tags.values(), key=lambda t: t['name']) if product_allowed(code) else []
         metrics = {}
         for kind, unit in [('price', 'KRW'), ('turnover', 'KRW'), ('market_cap', 'KRW'), ('liquidity', 'KRW')]:
             values = []
@@ -171,6 +177,7 @@ def analyze(document, *, generated_at=None):
             companions.append(dict(sector=tag['name'], stock_codes=peers, count=len(peers)))
         m = evidence[code]
         missing = []
+        if not product_allowed(code): missing.append('product_candidate_filter_blocked')
         if not full: missing.append('incomplete_ranking_window')
         if not sectors[code]: missing.append('sector_classification_unavailable')
         if not any(c['count'] for c in companions): missing.append('sector_companion_unavailable')
@@ -182,7 +189,7 @@ def analyze(document, *, generated_at=None):
         liquid_ok = bool(m['liquidity']['available'] and Decimal(m['liquidity']['observations'][-1]['value']) > 0)
         if not cap_ok: missing.append('market_cap_3000_eok_not_verified')
         if not liquid_ok: missing.append('intraday_liquidity_not_verified')
-        attention = hits >= 2 and len(ranks) >= 2 and history[-1]['rank'] is not None and history[-1]['rank'] <= 5
+        attention = product_allowed(code) and hits >= 2 and len(ranks) >= 2 and history[-1]['rank'] is not None and history[-1]['rank'] <= 5
         increasing = all(m[k]['change'] is not None and Decimal(m[k]['change']) > 0 for k in ('price', 'turnover'))
         momentum = attention and full and increasing and cap_ok and liquid_ok and any(c['count'] for c in companions)
         status = 'momentum_candidate' if momentum else 'attention_leader' if attention else 'insufficient_evidence'

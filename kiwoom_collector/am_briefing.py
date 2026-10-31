@@ -66,6 +66,9 @@ def analyze(document, *, generated_at=None):
     candidates, groups = [], {}
     for row in base['rows']:
         code = row['stock_code']
+        if ('candidate_filter' in document and
+                document['candidate_filter']['decisions'].get(code, {}).get('state') != 'analysis_candidate'):
+            continue
         metrics = {kind: latest(document, code, kind, cutoff)
                    for kind in ('names', 'change_pct', 'turnover', 'market_cap')}
         value = lambda kind: Decimal(metrics[kind]['value']) if metrics[kind] else None
@@ -135,6 +138,8 @@ def analyze(document, *, generated_at=None):
     if window:
         result.update(observation_policy=window.document(),decision_deadline_at=window.deadline(cutoff).isoformat(),
                       observation_phase='preliminary' if cutoff.strftime('%H:%M')<'09:50' else 'final')
+    if 'candidate_filter' in document:
+        result['candidate_filter'] = document['candidate_filter']
     result['evaluation_reference'] = hashlib.sha256(am.canonical(result).encode()).hexdigest()
     return result
 

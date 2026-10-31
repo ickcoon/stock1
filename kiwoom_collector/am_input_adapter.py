@@ -15,6 +15,7 @@ import sqlite3
 from . import am_momentum as am, am_briefing as briefing
 from .cross_adapter import readonly_database
 from . import am_time_policy as timing
+from .am_candidate_adapter import normalize_code
 
 
 def fingerprint(record):
@@ -24,6 +25,7 @@ def fingerprint(record):
 def read_sources(path, *, role='ranking'):
     """Export allowlisted fields only; no raw API bodies, auth or file paths."""
     records = []
+    diagnostic_records = []
     with readonly_database(path) as (db, provenance):
         tables = {r[0] for r in db.execute("SELECT name FROM sqlite_master WHERE type='table'")}
         def rows(table):
@@ -75,10 +77,15 @@ def read_sources(path, *, role='ranking'):
                                     request_profile=json.loads(run.get('request_json', '{}')),
                                     stock_code=raw.get('stk_cd'), stored_code=r.get('stock_code'),
                                     trde_prica=raw.get('trde_prica'), flu_rt=raw.get('flu_rt'), cur_prc=raw.get('cur_prc')))
+                # Preserve 0186 rank for diagnostics without changing the reviewed
+                # metric record contract/fingerprint used by existing manifests.
+                diagnostic_records.append(dict(records[-1], now_rank=raw.get('now_rank'),
+                                               stored_turnover_rank=r.get('turnover_rank')))
         else:
             raise ValueError('unsupported_source_role')
     return dict(role=role, sha256=provenance['sha256'], hash_unchanged=provenance['hash_unchanged'],
-                sqlite_mode=provenance['sqlite_mode'], records=records)
+                sqlite_mode=provenance['sqlite_mode'], records=records,
+                diagnostic_records=diagnostic_records if role == 'turnover' else records)
 
 
 def read_capital(path):
@@ -109,7 +116,9 @@ def quote_mode_valid(record, window):
 
 def adapt(ranking_db, *, trade_date, cutoff_at, environment, evidence=None,
           turnover_db=None, capital_json=None, test_mode=False, synthetic=False,
-          observation_policy=None, master_db=None):
+          observation_policy=None, master_db=None, candidate_filter=False):
+    if type(candidate_filter) is not bool or (candidate_filter and master_db is None):
+        raise ValueError('candidate_filter_requires_master_db')
     day, cutoff = date.fromisoformat(trade_date), am.instant(cutoff_at)
     if cutoff.date() != day or not '09:20' <= cutoff.strftime('%H:%M') <= '09:50':
         raise ValueError('invalid_adapter_cutoff')
@@ -202,7 +211,7 @@ def adapt(ranking_db, *, trade_date, cutoff_at, environment, evidence=None,
             if (slot not in am.SLOTS or planned.date() != day or not slot_ok or planned>cutoff
                     or started > am.instant(proof['received_at'])):
                 reject(record, 'scheduled_and_actual_minute_mismatch'); continue
-            stocks = record['stocks']
+            stocks = [dict(r, stk_cd=normalize_code(r['stk_cd'])) if candidate_filter else r for r in record['stocks']]
             if record['record_count'] != len(stocks) or len(stocks) != 20:
                 reject(record, 'ranking_row_count_mismatch'); continue
             if any(not isinstance(r['stk_cd'], str) or not am.CODE.fullmatch(r['stk_cd']) or r['stk_cd'].endswith(('_NX', '_AL')) for r in stocks):
@@ -219,11 +228,13 @@ def adapt(ranking_db, *, trade_date, cutoff_at, environment, evidence=None,
             kind = record['kind']
             if kind == 'ranking': continue
             code = record.get('stock_code') or record.get('requested_code')
+            identity = normalize_code if candidate_filter else lambda value: value
+            code = identity(code)
             if code not in codes:
                 reject(record, 'no_same_day_ranking_code'); continue
             if kind != 'sector' and record.get('environment') != environment:
                 reject(record, 'mixed_environment'); continue
-            if kind == 'quote' and (record.get('parent_environment') != environment or record.get('parent_code') != code
+            if kind == 'quote' and (record.get('parent_environment') != environment or identity(record.get('parent_code')) != code
                                     or record.get('collection_id') not in accepted_parents
                                     or record.get('batch_collection_id') != record.get('collection_id')
                                     or record.get('batch_api_id') != record.get('api_id')
@@ -240,7 +251,7 @@ def adapt(ranking_db, *, trade_date, cutoff_at, environment, evidence=None,
                 reject(record, 'capital_api_mismatch'); continue
             if kind == 'quote' and record.get('api_id') not in ('ka10007', 'ka10095'):
                 reject(record, 'quote_api_mismatch'); continue
-            if kind == 'turnover' and (record.get('api_id') != 'ka10032' or record.get('stored_code') != code
+            if kind == 'turnover' and (record.get('api_id') != 'ka10032' or identity(record.get('stored_code')) != code
                                        or record.get('validation_status') != 'syntax_valid'
                                        or record.get('request_profile', {}).get('stex_tp') != '1'):
                 reject(record, 'turnover_identity_mismatch'); continue
@@ -260,7 +271,7 @@ def adapt(ranking_db, *, trade_date, cutoff_at, environment, evidence=None,
                 if proof.get('unit_runtime_verified') is not True:
                     reject(record, 'runtime_units_unverified'); continue
                 if kind == 'capital':
-                    if units.get('mac') == 'hundred_million_KRW' and proof.get('market_cap_basis_verified') is True and code == record.get('requested_code'):
+                    if units.get('mac') == 'hundred_million_KRW' and proof.get('market_cap_basis_verified') is True and code == identity(record.get('requested_code')):
                         metric(code, 'market_cap', record.get('mac'), 'KRW', proof, multiplier=100000000)
                     else:
                         reject(record, 'capital_unit_or_basis_unverified'); continue
@@ -279,9 +290,13 @@ def adapt(ranking_db, *, trade_date, cutoff_at, environment, evidence=None,
         rejected=diagnostics, accepted=usable_records, verification='externally_reviewed_manifest_required',
         ranking_test_mode=test_mode, automatic_delivery_enabled=False,
         data_origin='synthetic_fixture' if synthetic else 'unverified')
-    if master_db is not None:
+    if master_db is not None and not candidate_filter:
         from .am_master_adapter import enrich
         enrich(document,master_db,synthetic=synthetic)
+    if candidate_filter:
+        from .am_candidate_adapter import enrich
+        document = enrich(document, master_db, synthetic=synthetic,
+                          source_records=[r for s in sources for r in s.get('diagnostic_records', s['records'])])
     # Run the existing engine contract now, so malformed duplicates never escape.
     briefing.analyze(document, generated_at=deadline.isoformat())
     return document
@@ -294,6 +309,7 @@ def main(argv=None):
     parser.add_argument('--capital-json', type=Path)
     parser.add_argument('--evidence', type=Path)
     parser.add_argument('--master-db', type=Path)
+    parser.add_argument('--candidate-filter', action='store_true')
     parser.add_argument('--timing-policy', type=Path)
     parser.add_argument('--date', required=True)
     parser.add_argument('--cutoff', required=True)
@@ -306,7 +322,7 @@ def main(argv=None):
         manifest = json.loads(args.evidence.read_text(encoding='utf-8')) if args.evidence else None
         document = adapt(args.ranking_db, trade_date=args.date, cutoff_at=args.cutoff, environment=args.environment,
                          evidence=manifest, turnover_db=args.turnover_db, capital_json=args.capital_json,
-                         test_mode=args.test_mode, synthetic=args.synthetic,master_db=args.master_db,
+                         test_mode=args.test_mode, synthetic=args.synthetic,master_db=args.master_db,candidate_filter=args.candidate_filter,
                          observation_policy=json.loads(args.timing_policy.read_text(encoding='utf-8')) if args.timing_policy else None)
         report = briefing.analyze(document)
         briefing.write_reports(report, args.name)
