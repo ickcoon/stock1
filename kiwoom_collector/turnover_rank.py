@@ -13,7 +13,7 @@ from uuid import uuid4
 
 import requests
 
-from .client import KST, KiwoomClient, RATE_CODES
+from .client import KST, KiwoomClient, RATE_CODES, _auth_error, _code
 from .config import PROJECT_ROOT, load_credentials
 from .errors import KiwoomError
 from .quotes import CODE
@@ -161,10 +161,11 @@ class LiveTransport(KiwoomClient):
     def fetch(self,profile,continuation):
         capture=Capture()
         try:
-            if self.token is None or self.token.expires_at<=datetime.now(KST)+timedelta(seconds=30):
+            margin = 600 if self._token_manager is not None else 30
+            if self.token is None or self.token.expires_at<=datetime.now(KST)+timedelta(seconds=margin):
                 if getattr(self,'_ranking_started',False):
                     capture.error='authentication_failed';return capture
-                self.authenticate(attempts=1)
+                self.ensure_token(single_request=True)
         except KiwoomError:
             capture.error='authentication_failed';return capture
         except KeyboardInterrupt:
@@ -179,6 +180,10 @@ class LiveTransport(KiwoomClient):
             capture.headers={key:response.headers[key] for key in ('cont-yn','next-key') if key in response.headers}
             try:capture.data=response.json()
             except ValueError:capture.error='invalid_json'
+            try:code=_code(capture.data) if isinstance(capture.data,dict) else None
+            except KiwoomError:code=None
+            if response.status_code==401 or (isinstance(capture.data,dict) and _auth_error(code,capture.data)):
+                self.invalidate_token(cooldown=True)
         except requests.RequestException:capture.error='transport_failed'
         except KeyboardInterrupt:capture.error='interrupted'
         finally:capture.finished_at=stamp()

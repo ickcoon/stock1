@@ -14,7 +14,7 @@ from uuid import uuid4
 
 import requests
 
-from .client import KST, KiwoomClient, _code
+from .client import KST, KiwoomClient, _code, _auth_error
 from .errors import KiwoomError
 from .api_resource import exclusive_quotes
 
@@ -62,8 +62,7 @@ class QuoteClient(KiwoomClient):
             raise ValueError('시세 요청 종목코드 형식을 확인하세요.')
         result = Quote()
         try:
-            if self.token is None or self.token.expires_at <= datetime.now(KST) + timedelta(seconds=30):
-                self.authenticate(attempts=1)
+            self.ensure_token(single_request=True)
         except KiwoomError:
             result.issues = ['authentication_failed']
             return result
@@ -84,6 +83,7 @@ class QuoteClient(KiwoomClient):
             result.request_finished_at = stamp()
         result.http_status = response.status_code
         if not 200 <= response.status_code < 300:
+            if response.status_code == 401:self.invalidate_token(cooldown=True)
             result.issues = ['http_failed']
             return result
         try:
@@ -100,6 +100,7 @@ class QuoteClient(KiwoomClient):
             result.issues = ['invalid_return_code']
             return result
         if result.return_code != 0:
+            if _auth_error(result.return_code, data):self.invalidate_token(cooldown=True)
             result.issues = ['missing_return_code' if result.return_code is None else 'api_failed']
             return result
         if response.headers.get('cont-yn') == 'Y':
@@ -193,8 +194,7 @@ class BatchQuoteClient(QuoteClient):
             return {c: Quote('error', common.request_started_at, common.request_finished_at,
                              common.http_status, common.return_code, issues=[issue]) for c in codes}
         try:
-            if self.token is None or self.token.expires_at <= datetime.now(KST) + timedelta(seconds=30):
-                self.authenticate(attempts=1)
+            self.ensure_token(single_request=True)
         except KiwoomError:
             return failed('authentication_failed')
         self._check_deadline(30)  # Authentication may have consumed the remaining budget.
@@ -214,6 +214,7 @@ class BatchQuoteClient(QuoteClient):
             common.request_finished_at = stamp()
         common.http_status = response.status_code
         if not 200 <= response.status_code < 300:
+            if response.status_code == 401:self.invalidate_token(cooldown=True)
             return failed('http_failed')
         try:
             data = response.json()
@@ -231,6 +232,7 @@ class BatchQuoteClient(QuoteClient):
                      if specific in (1700,1701,1702) else 'authentication_failed'
                      if specific in (8001,8002,8003,8005,8006,8009,8010,8011,8012,8015,8016,
                                      8030,8031,8040,8050,8103) else 'api_failed')
+            if issue == 'authentication_failed':self.invalidate_token(cooldown=True)
             return failed(issue)
         if response.headers.get('cont-yn') == 'Y':
             return failed('continuation_not_supported')

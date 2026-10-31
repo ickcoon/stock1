@@ -295,12 +295,25 @@ class TurnoverLiveContractTests(unittest.TestCase):
 
     def test_http_api_json_network_failures_do_not_replay(self):
         for response in (reply({},429),reply({},401),reply({'return_code':1700}),reply([])):
+            # Each case is an independent capture. A 401 now invalidates the
+            # token, so do not reuse that rejected token for the next case.
+            self.client.token=Token('test-only-token',datetime.now(KST)+timedelta(hours=1))
+            self.client._ranking_started=False
             self.session.post.reset_mock();self.session.post.return_value=response
             capture=self.client.fetch(tr.Profile(),{})
             self.assertTrue(tr.analyze_capture(capture,tr.Profile())['issues']);self.assertEqual(self.session.post.call_count,1)
         self.session.post.side_effect=requests.Timeout('private error')
         capture=self.client.fetch(tr.Profile(),{});self.assertEqual(capture.error,'transport_failed')
         self.assertNotIn('private error',repr(capture))
+
+    def test_401_invalidates_token_and_never_replays_same_capture(self):
+        self.session.post.return_value=reply({},401)
+        self.client.fetch(tr.Profile(),{})
+        self.assertIsNone(self.client.token)
+        self.session.post.reset_mock()
+        capture=self.client.fetch(tr.Profile(),{})
+        self.assertEqual(capture.error,'authentication_failed')
+        self.session.post.assert_not_called()
 
     def test_auth_failure_is_not_stamped_as_quote_request(self):
         self.client.token=None

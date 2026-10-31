@@ -44,3 +44,7 @@ credentials.json
 
 # Independent Telegram delivery reservations (no credentials).
 /notification_state/
+
+# Protected local token caches must never be release artifacts.
+*.token-cache.bin
+/token-cache/

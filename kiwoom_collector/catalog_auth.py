@@ -53,14 +53,38 @@ class OAuthProvider:
     Future issuance can have server-side effects for the same App Key. The
     review flag is a prerequisite, NOT a guarantee of remote token coexistence.
     """
-    def __init__(self,credentials,*,approved=False,token_impact_reviewed=False,client_factory=None):
+    def __init__(self,credentials,*,approved=False,token_impact_reviewed=False,client_factory=None,
+                 auto_refresh=False,cache=None):
         if approved is not True or token_impact_reviewed is not True:
             raise AuthBridgeError('oauth_approval_and_token_impact_review_required')
         self._credentials=credentials;self._factory=client_factory;self._client=None;self._token=None
         self.oauth_calls=0;self._stopped=False
+        self._manager=None
+        if type(auto_refresh) is not bool or (cache is not None and not auto_refresh):
+            raise AuthBridgeError('invalid_managed_auth_scope')
+        if auto_refresh:
+            from .token_manager import TokenManager
+            self._manager=TokenManager(self._issue_once,credentials=credentials,cache=cache)
+
+    def _issue_once(self):
+        if self._client is None:
+            if self._factory is None:
+                from .client import KiwoomClient
+                self._factory=KiwoomClient
+            self._client=self._factory(self._credentials)
+        self.oauth_calls+=1
+        return self._client.authenticate(attempts=1)
+
+    def check_scope(self,credentials):
+        from .token_manager import TokenManager
+        if self._credentials is None or TokenManager.scope(credentials)!=TokenManager.scope(self._credentials):
+            raise AuthBridgeError('provider_scope_mismatch')
 
     def get_token(self,*,minimum_valid_seconds=330):
         if not 0<=minimum_valid_seconds<=1830:raise AuthBridgeError('invalid_token_lifetime_budget')
+        if self._stopped:raise AuthBridgeError('provider_closed_or_stopped')
+        if self._manager is not None:
+            return self._manager.get_token(minimum_valid_seconds=minimum_valid_seconds).value
         current=datetime.now().astimezone()
         if self._token is not None and self._token.expires_at>current+timedelta(seconds=minimum_valid_seconds):
             return self._token.value
@@ -83,7 +107,14 @@ class OAuthProvider:
             raise AuthBridgeError('oauth_failed_or_token_invalid_no_retry') from None
 
     def close(self):
+        if self._manager is not None:self._manager.close()
         if self._client is not None:
             self._client.token=None  # Our isolated instance only, never the collector.
             self._client.close()
         self._client=None;self._token=None;self._credentials=None;self._stopped=True
+
+    def invalidate(self,value):
+        if self._manager is not None:
+            self._manager.invalidate(value,cooldown=True)
+        else:
+            self._token=None;self._stopped=True

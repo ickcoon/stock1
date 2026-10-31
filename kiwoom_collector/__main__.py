@@ -52,6 +52,7 @@ def validate_cli(parser, args):
     elif values:
         parser.error('추가 위치 인자는 sector/condition 하위 명령에서만 사용합니다.')
     policy = {
+        'protected_token_cache': {'collect'},
         'with_top20_quotes': {'collect'},
         'environment': {'quote-fields-test', 'quote-integrated-test', 'sector radar', 'sector timeline', 'sector dashboard', 'sector export-priority',
                         'sector import', 'sector workbench', 'condition report', 'quote-test', 'quote-batch-test', 'quote-top20-test'},
@@ -83,6 +84,8 @@ def validate_cli(parser, args):
         parser.error('--with-top20-quotes는 collect --schedule과 함께 사용하세요.')
     if args.schedule and (args.test_now or args.interval is not None):
         parser.error('--schedule은 --test-now/--interval과 함께 사용할 수 없습니다.')
+    if args.protected_token_cache and args.test_now:
+        parser.error('--protected-token-cache는 단발 --test-now에서 사용하지 않습니다.')
     if args.interval is not None and args.interval < 60:
         parser.error('--interval은 60초 이상이어야 합니다.')
     args.interval = 300 if args.interval is None else args.interval
@@ -121,6 +124,8 @@ def main(argv=None) -> int:
     parser.add_argument("--dry-run", action="store_true", help="sector import: 검증만, 태그 저장 안 함")
     parser.add_argument("--output", type=Path, help="sector export-untagged/export-priority/workbench/dashboard/import-report: 새 CSV/HTML/JSON 경로")
     parser.add_argument('--schedule', action='store_true', help='collect: KST 하루 10회 고정 시간표')
+    parser.add_argument('--protected-token-cache', action='store_true',
+                        help='collect: Windows 사용자 DPAPI 토큰 캐시 및 프로세스 간 갱신 잠금 사용')
     parser.add_argument('--with-top20-quotes', action='store_true', help='collect --schedule: 신규 성공 회차에만 ka10095 후속 시세 수집 (기본 꺼짐)')
     parser.add_argument('--holidays', type=Path, help='고정 일정용 KRX 휴장일 목록 파일')
     parser.add_argument('--date', help='sector timeline/dashboard/radar: YYYY-MM-DD, 기본 KST 오늘')
@@ -282,6 +287,8 @@ def main(argv=None) -> int:
             return 0
         resources.enter_context(api_resource(args.db, credentials.environment))
         client = BatchQuoteClient(credentials) if args.with_top20_quotes else KiwoomClient(credentials)
+        if args.protected_token_cache:
+            client.enable_token_cache()
         if args.command == "collect":
             if args.schedule:
                 holidays = load_holidays(args.holidays)

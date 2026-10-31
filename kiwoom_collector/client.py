@@ -12,7 +12,7 @@ import time
 import requests
 
 from .config import Credentials
-from .errors import KiwoomError, ResponseValidationError
+from .errors import KiwoomError, ResponseValidationError, TransportError
 from .diagnostics import response_shape
 
 KST = timezone(timedelta(hours=9))
@@ -59,16 +59,54 @@ class KiwoomClient:
     # Local safety policy shared by mock/real and authentication/ranking/quotes.
     request_interval = DEFAULT_REQUEST_SPACING
 
-    def __init__(self, credentials: Credentials):
+    def __init__(self, credentials: Credentials, *, token_manager=None):
         self.credentials = credentials
+        if token_manager is not None:token_manager.check_scope(credentials)
         # Only the two documented hosts; no arbitrary URL or order API interface.
         self.session = requests.Session()
         self.token: Token | None = None
+        self._token_manager = token_manager
+        self._owns_token_manager = token_manager is None
         self.last_diagnostic = {}
         self._last_request: float | None = None
 
     def close(self) -> None:
+        self.token = None
+        if self._token_manager is not None and self._owns_token_manager:
+            self._token_manager.close()
         self.session.close()
+
+    def enable_token_cache(self, *, root=None):
+        """Explicit opt-in; no cache or filesystem access in the constructor."""
+        from .token_cache import ProtectedTokenCache
+        from .token_manager import TokenManager
+        if self._token_manager is not None:
+            raise ValueError('token_manager_already_configured')
+        self._token_manager = TokenManager(lambda: self.authenticate(attempts=1), credentials=self.credentials,
+                                          cache=ProtectedTokenCache(self.credentials, root=root))
+
+    def ensure_token(self, *, single_request=False):
+        if single_request and self._token_manager is None:
+            # Preserve explicitly bounded, one-shot diagnostic contracts.
+            if self.token is None or self.token.expires_at <= datetime.now(KST)+timedelta(seconds=30):
+                self.authenticate(attempts=1)
+            return self.token
+        if self._token_manager is None:
+            from .token_manager import TokenManager
+            self._token_manager = TokenManager(lambda: self.authenticate(attempts=1), credentials=self.credentials)
+        try:
+            self._token_manager.check_scope(self.credentials)
+            token = self._token_manager.get_token(attempts=1 if single_request else 2, existing=self.token)
+        except KiwoomError:
+            self.token = None
+            raise
+        self.token = token
+        return token
+
+    def invalidate_token(self, *, cooldown=False):
+        previous, self.token = self.token, None
+        if previous is not None and self._token_manager is not None:
+            self._token_manager.invalidate(previous.value, cooldown=cooldown)
 
     def _request(self, path, body, headers, *, before_send=None):
         """Pace consecutive Session.post starts, including auth and retries.
@@ -99,15 +137,15 @@ class KiwoomClient:
             try:
                 response = self._request(path, body, headers)
             except requests.exceptions.SSLError:
-                raise KiwoomError("TLS 인증서 검증 실패. 인증서/프록시 설정을 확인하세요.") from None
+                raise TransportError("TLS 인증서 검증 실패. 인증서/프록시 설정을 확인하세요.", category='tls') from None
             except (requests.Timeout, requests.ConnectionError):
                 if attempt == attempts - 1:
-                    raise KiwoomError(f"네트워크 연결/시간 초과: 최대 {attempts}회 시도 후 중단했습니다.") from None
+                    raise TransportError(f"네트워크 연결/시간 초과: 최대 {attempts}회 시도 후 중단했습니다.", category='network', retryable=True) from None
                 LOG.warning("네트워크 오류: 재시도 %d/2", attempt + 1)
                 time.sleep(2 ** attempt)
                 continue
             except requests.RequestException:
-                raise KiwoomError("HTTP 요청을 수행하지 못했습니다.") from None
+                raise TransportError("HTTP 요청을 수행하지 못했습니다.", category='transport') from None
             try:
                 data = response.json()
             except ValueError:
@@ -119,13 +157,14 @@ class KiwoomClient:
                 response.status_code == 200 and code in RATE_CODES
             )
             if retryable:
-                if attempt == attempts - 1:
-                    raise KiwoomError(f"호출 제한 또는 서버 오류: 최대 {attempts}회 시도 후 중단했습니다.")
-                delay = 2 ** attempt
                 retry_after = response.headers.get("Retry-After", "")
+                if retry_after.isdigit() and int(retry_after) > 60:
+                    raise TransportError("서버 대기 요청이 60초를 초과합니다. 나중에 다시 실행하세요.", category='server_or_rate_limit')
+                if attempt == attempts - 1:
+                    raise TransportError(f"호출 제한 또는 서버 오류: 최대 {attempts}회 시도 후 중단했습니다.", category='server_or_rate_limit', retryable=True,
+                                         retry_after=max(1,int(retry_after)) if retry_after.isdigit() else 1)
+                delay = 2 ** attempt
                 if retry_after.isdigit():
-                    if int(retry_after) > 60:
-                        raise KiwoomError("서버 대기 요청이 60초를 초과합니다. 나중에 다시 실행하세요.")
                     delay = max(delay, int(retry_after))
                 LOG.warning("호출 제한/서버 오류: %d초 후 재시도", delay)
                 time.sleep(delay)
@@ -168,8 +207,7 @@ class KiwoomClient:
 
     def _page(self, qry_tp: str, continuation: dict, *, single_request=False):
         for auth_attempt in range(1 if single_request else 2):
-            if self.token is None or self.token.expires_at <= datetime.now(KST) + timedelta(seconds=30):
-                self.authenticate(attempts=1 if single_request else 3)
+            self.ensure_token(single_request=single_request)
             response, data = self._post(
                 "/api/dostk/stkinfo", {"qry_tp": qry_tp},
                 {"api-id": "ka00198", "authorization": "Bearer " + self.token.value, **continuation},
@@ -178,7 +216,7 @@ class KiwoomClient:
             code = _code(data) if isinstance(data, dict) else None
             expired = response.status_code == 401 or (isinstance(data, dict) and _auth_error(code, data))
             if expired:
-                self.token = None
+                self.invalidate_token(cooldown=auth_attempt > 0)
                 if auth_attempt == 0 and not single_request:
                     LOG.warning("인증 만료/무효 응답: 토큰 재발급 후 한 번 재조회합니다.")
                     continue
