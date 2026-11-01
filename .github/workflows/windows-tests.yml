@@ -19,5 +19,8 @@ jobs:
           python-version: '3.11'
       - name: Install dependencies
         run: python -m pip install -r requirements.txt
+      - name: Show non-secret test environment
+        run: |
+          python -c "import json,os,platform,sys,tempfile; from pathlib import Path; p=Path(tempfile.gettempdir()); print(json.dumps(dict(os=platform.platform(),python=sys.version,executable=sys.executable,cwd=str(Path.cwd()),temp=str(p),resolved_temp=str(p.resolve()),environment={k:os.environ.get(k) for k in ('TEMP','TMP','RUNNER_TEMP','GITHUB_WORKSPACE')}),indent=2))"
       - name: Run offline tests
         run: python -m unittest discover -s tests -v

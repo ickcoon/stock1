@@ -125,11 +125,29 @@ class TokenManagerTests(unittest.TestCase):
         self.issuer.assert_called_once()
 
 
+class CacheSecurityContractTests(unittest.TestCase):
+    """Failure contracts use no Windows profile or working encryption provider."""
+    def test_failed_encryption_stops_before_oauth(self):
+        with tempfile.TemporaryDirectory() as folder:
+            protector=Mock()
+            protector.protect.side_effect=RuntimeError(FAKE)
+            issuer=Mock(side_effect=AssertionError('issuer must not run'))
+            with patch('kiwoom_collector.token_cache.WindowsDPAPI',
+                       side_effect=AssertionError('DPAPI must not be constructed')) as dpapi:
+                cache=ProtectedTokenCache(credentials(),root=Path(folder).resolve(),protector=protector)
+                manager=TokenManager(issuer,credentials=credentials(),cache=cache)
+                with self.assertRaisesRegex(TokenManagementError,'cache_write_failed'):manager.get_token()
+            dpapi.assert_not_called()
+            protector.protect.assert_called_once()
+            issuer.assert_not_called()
+            self.assertFalse(cache.path.exists())
+
+
 @unittest.skipUnless(os.name=='nt','Windows user protection required')
 class ProtectedCacheTests(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
-        self.root=Path(self.temp.name)
+        self.root=Path(self.temp.name).resolve()
         self.now=datetime.now(KST)
 
     def manager(self, environment='mock', secret='SYNTHETIC_SECRET'):
@@ -206,14 +224,6 @@ class ProtectedCacheTests(unittest.TestCase):
             for p in processes:
                 if p.is_alive():p.terminate();p.join(2)
             queue.close()
-
-    def test_failed_encryption_stops_before_oauth(self):
-        manager,issuer,cache=self.manager()
-        with patch.object(cache.protector,'protect',side_effect=RuntimeError(FAKE)):
-            with self.assertRaisesRegex(TokenManagementError,'cache_write_failed'):manager.get_token()
-        issuer.assert_not_called()
-        self.assertFalse(cache.path.exists())
-
 
 class IntegrationTests(unittest.TestCase):
     def setUp(self):
