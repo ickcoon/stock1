@@ -1,0 +1,2 @@
+# Optional offline mini-chart renderer only.
+matplotlib==3.10.8

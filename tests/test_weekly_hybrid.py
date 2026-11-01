@@ -49,6 +49,78 @@ class HybridTests(unittest.TestCase):
         self.assertEqual(doc,before);json.dumps(r,allow_nan=False);self.assertFalse(r['order_signal'])
         return r
 
+    def test_distance_band_boundaries(self):
+        from kiwoom_collector.analyst.hybrid import high52_distance_band
+        for value,code in (('1','breakout'),('0','breakout'),('-0.01','breakout_imminent'),
+                ('-3','breakout_imminent'),('-3.01','near_high'),('-7','near_high'),
+                ('-7.01','consider_resistance'),('-15','consider_resistance'),('-15.01','far_from_high')):
+            self.assertEqual(high52_distance_band(Decimal(value))['code'],code)
+
+    def test_provisional_distance_uses_same_capture_weekly_close_without_changing_daily(self):
+        doc,page,args=weekly_fixture();args['weekly_price_basis']=None
+        result=self.run_hybrid(doc,[page],args);p=result['provisional_high52']
+        self.assertEqual(p['distance_status'],'provisional')
+        self.assertEqual(p['comparison_price']['value'],'152')
+        self.assertEqual(p['comparison_price']['bar_date'],'2026-10-26')
+        self.assertEqual(p['comparison_price']['kind'],'latest_available_weekly_close_not_live_quote')
+        self.assertEqual(p['distance_band']['code'],'breakout_imminent')
+        self.assertEqual(result['primary_high52']['status'],'unavailable')
+        self.assertEqual(result['daily'],analyze_context(doc))
+        self.assertFalse(p['buy_signal'])
+
+    def test_invalid_latest_close_and_future_date_are_unavailable(self):
+        for kind in ('invalid','future'):
+            doc,page,args=weekly_fixture();body=page.raw
+            if kind=='invalid':body[w.LIST_KEY][0]['cur_prc']='0'
+            else:body[w.LIST_KEY][0]['dt']='20261102'
+            parsed=w.parse_response(body,request=page.request,response_environment='mock',
+                request_started_at=page.request_started_at,response_received_at=page.response_received_at,
+                source=page.source,cont_yn='N',response_api_id='ka10082')
+            result=self.run_hybrid(doc,[parsed],args)['provisional_high52']
+            self.assertEqual(result['status'],'unavailable')
+            self.assertIsNone(result['price_vs_high_percent'])
+
+    def test_provisional_high_without_basis_preserves_primary_and_daily(self):
+        doc,page,args=weekly_fixture();args['weekly_price_basis']=None
+        result=self.run_hybrid(doc,[page],args)
+        provisional=result['provisional_high52']
+        self.assertEqual(provisional['status'],'provisional')
+        self.assertEqual(provisional['prior_high'],'153')
+        self.assertEqual(provisional['high_weeks'][0]['start'],'2026-10-19')
+        self.assertEqual(provisional['observed_weeks'],52)
+        self.assertFalse(provisional['price_basis_verified'])
+        self.assertFalse(provisional['completion_verified'])
+        self.assertFalse(provisional['used_for_candidate_score'])
+        self.assertFalse(provisional['buy_signal'])
+        self.assertEqual(result['primary_high52']['status'],'unavailable')
+        self.assertEqual(result['daily'],analyze_context(doc))
+        self.assertNotIn('999999',json.dumps(result))
+
+    def test_provisional_missing_duplicate_and_invalid_bars_are_unavailable(self):
+        for kind in ('missing','duplicate','invalid'):
+            doc,page,args=weekly_fixture();body=page.raw
+            if kind=='missing':body[w.LIST_KEY].pop(5)
+            elif kind=='duplicate':body[w.LIST_KEY].insert(5,deepcopy(body[w.LIST_KEY][5]))
+            else:body[w.LIST_KEY][5]['high_pric']='1'
+            parsed=w.parse_response(body,request=page.request,response_environment='mock',
+                request_started_at=page.request_started_at,response_received_at=page.response_received_at,
+                source=page.source,cont_yn='N',response_api_id='ka10082')
+            result=self.run_hybrid(doc,[parsed],args)
+            self.assertEqual(result['provisional_high52']['status'],'unavailable',kind)
+            self.assertIsNone(result['provisional_high52']['prior_high'])
+
+    def test_provisional_tied_highs_and_future_receipt(self):
+        doc,page,args=weekly_fixture();body=page.raw;body[w.LIST_KEY][2]['high_pric']='153'
+        parsed=w.parse_response(body,request=page.request,response_environment='mock',
+            request_started_at=page.request_started_at,response_received_at=page.response_received_at,
+            source=page.source,cont_yn='N',response_api_id='ka10082')
+        result=self.run_hybrid(doc,[parsed],args)
+        self.assertEqual(len(result['provisional_high52']['high_weeks']),2)
+        future=w.parse_response(body,request=page.request,response_environment='mock',
+            request_started_at='2099-01-01T00:00:00+09:00',response_received_at='2099-01-01T00:00:01+09:00',
+            source=page.source,cont_yn='N',response_api_id='ka10082')
+        self.assertEqual(self.run_hybrid(doc,[future],args)['provisional_high52']['status'],'unavailable')
+
     def test_complete_52_weeks_exclude_ongoing_and_preserve_daily_exactly(self):
         doc,page,args=weekly_fixture();r=self.run_hybrid(doc,[page],args)
         self.assertEqual(r['daily'],analyze_context(doc))

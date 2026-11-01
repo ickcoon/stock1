@@ -35,6 +35,26 @@ def compare(value, average):
     return None if value is None or average is None else 'above' if value > average else 'below' if value < average else 'equal'
 
 
+def mean_close(observed_bars,count):
+    """Shared arithmetic; callers retain their own validation/status policy."""
+    if len(observed_bars)<count:return None
+    return sum((b['close'] for b in observed_bars[-count:]),Decimal(0))/count
+
+
+def volume_areas(observed_bars,price):
+    """Existing top-five-volume OHLC proxy, no order or holding inference."""
+    ranked=sorted((b for b in observed_bars if b['volume']>0),
+        key=lambda b:(-b['volume'],b['trade_date']))[:5]
+    supply=[]
+    for bar in ranked:
+        typical=(bar['high']+bar['low']+bar['close'])/3
+        supply.append(dict(trade_date=bar['trade_date'],low=str(bar['low']),high=str(bar['high']),
+            typical_price=str(typical),volume=str(bar['volume']),close=str(bar['close']),
+            typical_above_observed_price=bool(price is not None and typical>price),
+            distance_percent=str((typical/price-1)*100) if price is not None else None))
+    return supply
+
+
 def analyze(document):
     """Consume analyst-input-v1 JSON; external review assertions are not invented."""
     if document.get('schema_version') != 'analyst-input-v1':
@@ -164,7 +184,7 @@ def analyze(document):
             reason = ('price_basis_unverified' if not basis_ok else 'calendar_unverified' if not calendar_ok
                       else 'insufficient_completed_sessions' if len(window) < count
                       else 'missing_or_invalid_bar_in_window' if any(d not in bars for d in window) else None)
-            value = sum((bars[d]['close'] for d in window), Decimal(0))/count if reason is None else None
+            value = mean_close([bars[d] for d in window],count) if reason is None else None
             values[count] = value
             averages['MA'+str(count)] = dict(value=str(value) if value is not None else None,
                 status='available' if value is not None else 'unavailable', reason=reason, required_bars=count,
@@ -196,14 +216,7 @@ def analyze(document):
                       and not bars[d]['volume_issues'] for d in profile_dates))
         supply = []
         if profile_ok:
-            ranked = sorted((bars[d] for d in profile_dates if bars[d]['volume'] > 0),
-                            key=lambda b:(-b['volume'], b['trade_date']))[:5]
-            for bar in ranked:
-                typical = (bar['high']+bar['low']+bar['close'])/3
-                supply.append(dict(trade_date=bar['trade_date'], low=str(bar['low']), high=str(bar['high']),
-                    typical_price=str(typical), volume=str(bar['volume']), close=str(bar['close']),
-                    typical_above_observed_price=bool(price is not None and typical > price),
-                    distance_percent=str((typical/price-1)*100) if price is not None else None))
+            supply=volume_areas([bars[d] for d in profile_dates],price)
         if not profile_ok:risk('twenty_bar_volume_proxy_unavailable')
         overhead = any(s['typical_above_observed_price'] for s in supply) if price is not None and profile_ok else None
         if overhead:risk('estimated_overhead_supply')

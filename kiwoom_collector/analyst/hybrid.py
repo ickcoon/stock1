@@ -32,6 +32,85 @@ class WeeklyEvidence:
     price_unit: str | None = None
 
 
+def high52_distance_band(distance):
+    if distance>=0:return dict(code='breakout',label='\uace0\uc810 \ub3cc\ud30c')
+    if distance>=-3:return dict(code='breakout_imminent',label='\ub3cc\ud30c \uc784\ubc15')
+    if distance>=-7:return dict(code='near_high',label='\uc2e0\uace0\uac00 \uadfc\uc811')
+    if distance>=-15:return dict(code='consider_resistance',label='\uc800\ud56d \uace0\ub824')
+    return dict(code='far_from_high',label='\uc2e0\uace0\uac00\uc640 \uac70\ub9ac \uc788\uc74c')
+
+
+def provisional_weekly_high(rows,pages,daily,cutoff,*,basis_verified,confirmed):
+    """Arithmetic only: calendar-week grouping is not a finality assertion."""
+    result=dict(status='unavailable',reason=None,prior_high=None,high_weeks=[],
+        definition='prior_52_calendar_weeks_excluding_request_reference_week',
+        required_weeks=52,observed_weeks=0,window_start=None,window_end=None,
+        source_period=None,adjustment_request=None,price_basis_verified=basis_verified,
+        completion_verified=confirmed,unverified_reasons=[],
+        used_for_candidate_score=False,buy_signal=False,leader_selection_applied=False,
+        distance_status='unavailable',price_vs_high_percent=None,distance_band=None,comparison_price=None,
+        price_unit='KRW',unit_basis='ka10082_documented_KRW',page_fingerprints=[p.fingerprint for p in pages])
+    if not basis_verified:result['unverified_reasons'].append('weekly_price_basis_unverified')
+    if not confirmed:result['unverified_reasons'].append('weekly_completion_or_calendar_unverified')
+    if not pages:
+        result['reason']='weekly_data_missing';return result
+    first=pages[0].request
+    if (any(p.request!=first or p.response_received_at>cutoff for p in pages)
+        or first.stock_code!=daily['stock_code'] or first.environment!=daily['environment']
+        or first.market!=daily['market']):
+        result['reason']='weekly_scope_or_cutoff_mismatch';return result
+    reference=date.fromisoformat(first.base_dt[:4]+'-'+first.base_dt[4:6]+'-'+first.base_dt[6:])
+    if reference>cutoff.date():
+        result['reason']='future_weekly_reference';return result
+    start=reference-timedelta(days=reference.weekday())
+    expected=[start-timedelta(weeks=n) for n in range(52,0,-1)]
+    result.update(window_start=expected[0].isoformat(),window_end=(start-timedelta(days=1)).isoformat(),
+        reference_week_excluded=start.isoformat(),adjustment_request=first.adjustment)
+    dates=[row.trade_date for _,row in rows if row.trade_date]
+    if dates:result['source_period']=dict(start=min(dates).isoformat(),end=max(dates).isoformat())
+    groups={week:[] for week in expected}
+    for page,row in rows:
+        if row.trade_date is None:
+            result['reason']='invalid_weekly_date';return result
+        if row.trade_date>reference:
+            result['reason']='weekly_date_after_request';return result
+        week=row.trade_date-timedelta(days=row.trade_date.weekday())
+        if week not in groups:continue
+        if (any('trde_prica' not in issue for issue in row.issues) or row.volume==0
+            or any(issue!='daily_order_unverified' for issue in page.issues)):
+            result['reason']='invalid_weekly_ohlcv';return result
+        groups[week].append(row)
+    result['observed_weeks']=sum(bool(items) for items in groups.values())
+    if any(len(items)>1 for items in groups.values()):
+        result['reason']='duplicate_weekly_period';return result
+    if any(not items for items in groups.values()):
+        result['reason']='insufficient_or_missing_calendar_week';return result
+    high=max(items[0].high for items in groups.values())
+    result.update(status='provisional',prior_high=str(high),high_weeks=[
+        dict(start=week.isoformat(),end=(week+timedelta(days=6)).isoformat(),bar_date=items[0].trade_date.isoformat())
+        for week,items in groups.items() if items[0].high==high])
+    latest=max(row.trade_date for _,row in rows)
+    current=[(page,row) for page,row in rows if row.trade_date==latest]
+    if len(current)!=1:
+        result.update(status='unavailable',reason='duplicate_comparison_bar',prior_high=None,high_weeks=[])
+        return result
+    page,row=current[0]
+    if (any('trde_prica' not in issue for issue in row.issues) or row.volume==0
+        or any(issue!='daily_order_unverified' for issue in page.issues)
+        or page.units.get('price')!='KRW'):
+        result.update(status='unavailable',reason='invalid_comparison_ohlcv_or_unit',prior_high=None,high_weeks=[])
+        return result
+    with localcontext() as arithmetic:
+        arithmetic.prec=50
+        distance=(row.close/high-1)*100
+    result.update(distance_status='provisional',price_vs_high_percent=str(distance),
+        distance_band=high52_distance_band(distance),comparison_price=dict(value=str(row.close),unit='KRW',
+            bar_date=latest.isoformat(),kind='latest_available_weekly_close_not_live_quote',
+            request_base_date=first.base_dt,response_received_at=page.response_received_at.isoformat(),
+            page_fingerprint=page.fingerprint,row_fingerprint=row.fingerprint))
+    return result
+
+
 def analyze_hybrid(document,pages,*,weekly_data_origin,weekly_price_basis=None,
                    weekly_calendar=None,evidence=(),candidate_context=None,weekly_context=None):
     standalone=document is None
@@ -148,5 +227,9 @@ def analyze_hybrid(document,pages,*,weekly_data_origin,weekly_price_basis=None,
             reference_week=safe_reference,selected_periods=safe_periods,high52=high52,
             quarantine=held),high52_source='weekly',primary_high52=deepcopy(high52),order_signal=False,
         notice='완료 주봉 52주의 고점은 일봉 252거래일 고점과 다른 지표. 일봉 계산·후보·주문 계약은 유지.')
+    result['provisional_high52']=provisional_weekly_high(rows,pages,daily,cutoff,
+        basis_verified=bool(scope_ok and basis_ok),confirmed=high52['status']=='available')
+    result['high52_validation']=dict(primary='confirmed' if high52['status']=='available' else 'unavailable',
+        provisional=result['provisional_high52']['status'])
     result['hybrid_reference']=fingerprint(result)
     return result

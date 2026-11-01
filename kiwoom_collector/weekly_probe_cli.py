@@ -35,14 +35,18 @@ def _no_oauth():raise TokenManagementError('weekly_oauth_disabled')
 class WeeklyHTTPTransport(HTTPTransport):
     """Same scoped/paced/TLS transport, separate weekly-only allowlist."""
     api_ids=('ka10082',)
-    def __init__(self,creds,request,access_token,expires_at,*,approved=False):
+    def __init__(self,creds,request,access_token,expires_at,*,approved=False,windows_trust_store=False):
         if approved is not True:raise ValueError('weekly_approval_required')
         self.manager=TokenManager(_no_oauth,credentials=creds)
         try:
             token=self.manager.get_token(existing=Token(access_token,timestamp(expires_at)),attempts=1)
             super().__init__(creds,[request],token.value,approved=True)
+            if windows_trust_store:
+                from .weekly_tls import configure_windows_trust
+                configure_windows_trust(self.client.session)
         except Exception:
             self.manager.close()
+            if hasattr(self,'client'):self.client.close()
             raise ValueError('valid_existing_token_and_reviewed_expiry_required_no_oauth') from None
     def fetch(self,request,continuation,deadline):
         # The issuer cannot make network calls; the manager has no shared cache.
@@ -80,6 +84,7 @@ def main(argv=None):
     mode.add_argument('--saved-weekly-json',type=Path)
     p.add_argument('--execute-approved',action='store_true');p.add_argument('--quota-reviewed',action='store_true')
     p.add_argument('--credentials-env-file',type=Path)
+    p.add_argument('--windows-trust-store',action='store_true',help='Use Windows native CA verification on this weekly Session only')
     args=p.parse_args(argv);transport=None
     try:
         request=weekly.WeeklyRequest('ka10082',args.stock_code,args.environment,args.base_date,args.adjustment)
@@ -120,7 +125,7 @@ def main(argv=None):
             token=os.environ.get('KIWOOM_ACCESS_TOKEN');expiry=os.environ.get('KIWOOM_ACCESS_TOKEN_EXPIRES_AT')
             if not token or not expiry:raise ValueError('existing_token_and_expiry_required')
             transport=WeeklyHTTPTransport(credentials(args.credentials_env_file,environment=args.environment),
-                request,token,expiry,approved=True)
+                request,token,expiry,approved=True,windows_trust_store=args.windows_trust_store)
         elif args.replay_json:transport=ReplayTransport(read_json(args.replay_json)[0])
         if args.saved_weekly_json:
             pages=tuple(restore_page(item,request) for item in capture['pages'])
@@ -161,12 +166,16 @@ def main(argv=None):
         report['hybrid_reference']=fingerprint(report)
         with (folder/'hybrid.json').open('x',encoding='utf-8') as target:
             json.dump(report,target,ensure_ascii=False,indent=2,allow_nan=False)
+        from .analyst.card import chart_card
+        with (folder/'card.json').open('x',encoding='utf-8') as target:
+            json.dump(chart_card(report),target,ensure_ascii=False,indent=2,allow_nan=False)
         summary=dict(module='weekly_probe',mode='live' if args.live else 'saved' if args.saved_weekly_json else 'replay',
             request=identity(request),daily_input=daily_provenance,
             saved_capture=capture_provenance if args.saved_weekly_json else None,collection=collection,
             parsed_rows=sum(len(page.rows) for page in pages),
             verified_completed_weeks=52 if report['primary_high52']['status']=='available' else 0,
             high52_status=report['primary_high52']['status'],
+            provisional_high52_status=report['provisional_high52']['status'],
             live_requests_attempted=bool(args.live and collection['api_calls']),
             api_response_reviewed=origin=='api_response' and report['primary_high52']['status']=='available')
         with (folder/'summary.json').open('x',encoding='utf-8') as target:

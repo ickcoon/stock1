@@ -1,0 +1,2 @@
+# Optional Windows trust store for isolated weekly sessions (Python >=3.10).
+truststore==0.10.5

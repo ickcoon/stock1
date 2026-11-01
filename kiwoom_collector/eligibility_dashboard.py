@@ -242,10 +242,16 @@ def frame_html(frame, bundle):
     return html.replace('</head>', '<style>'+CSS+selectors+'</style></head>', 1)
 
 
-def render(bundle):
-    return bubble.timeline.render(bundle['timeline'],frame_renderer=lambda f: frame_html(f,bundle)).replace(
+def render(bundle,*,top5_json=None,output_html=None):
+    html = bubble.timeline.render(bundle['timeline'],frame_renderer=lambda f: frame_html(f,bundle)).replace(
         '<title>STOCK1 · Bubble Radar 장중 타임라인</title>',
         '<title>STOCK1 · 주도주 매매 적격성 검토</title>', 1)
+    if top5_json is not None:
+        if output_html is None:raise ValueError('top5_output_html_required')
+        from .top5_dashboard import attach_top5
+        html=attach_top5(html,top5_json,output_html)
+    return html
+
 
 
 def main(argv=None):
@@ -254,6 +260,7 @@ def main(argv=None):
     parser.add_argument('--capital-json', type=Path)
     parser.add_argument('--proofs-json', type=Path)
     parser.add_argument('--output', type=Path, required=True)
+    parser.add_argument('--top5-json',type=Path)
     args = parser.parse_args(argv)
     def read(path):
         if path.suffix.lower() != '.json':
@@ -267,7 +274,7 @@ def main(argv=None):
         caps = [caps]
     bundle = build(document, capital_records=caps, capital_proofs=read(args.proofs_json) if args.proofs_json else None)
     with args.output.open('x',encoding='utf-8') as handle:
-        handle.write(render(bundle))
+        handle.write(render(bundle,top5_json=args.top5_json,output_html=args.output))
     return 0
 
 
