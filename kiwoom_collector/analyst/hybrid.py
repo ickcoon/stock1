@@ -33,34 +33,44 @@ class WeeklyEvidence:
 
 
 def analyze_hybrid(document,pages,*,weekly_data_origin,weekly_price_basis=None,
-                   weekly_calendar=None,evidence=(),candidate_context=None):
-    daily=analyze_context(document,candidate_context=candidate_context)
+                   weekly_calendar=None,evidence=(),candidate_context=None,weekly_context=None):
+    standalone=document is None
+    if standalone:
+        context=weekly_context or {}
+        daily={**context, 'reference_close':None,
+            'status':'unavailable','reason':'daily_input_missing','price_basis':None,
+            'moving_averages':{f'MA{n}':dict(status='unavailable',value=None,reason='daily_input_missing')
+                               for n in (3,5,20,60,200)},
+            'supply_proxy':dict(status='unavailable',reason='daily_input_missing',areas=[])}
+    else:
+        daily=analyze_context(document,candidate_context=candidate_context)
     cutoff=timestamp(daily['as_of']);basis=weekly_price_basis or {};calendar=weekly_calendar or {}
     pages=tuple(pages);evidence=tuple(evidence)
     reason=None;periods=[];reference=None;held=[];valid={}
-    daily_basis=daily['analysis']['evidence']['price_basis'] or {}
+    daily_basis={} if standalone else daily['analysis']['evidence']['price_basis'] or {}
     scope_ok=weekly_data_origin==daily['data_origin'] and all(
         p.request.stock_code==daily['stock_code'] and p.request.environment==daily['environment']
         and p.request.market==daily['market'] and p.request.adjustment==
         {'original':'0','adjusted':'1'}.get(basis.get('mode')) for p in pages)
     basis_ok=(known(basis,cutoff) and basis.get('verified') is True and basis.get('comparable') is True
         and basis.get('corporate_actions_checked') is True and bool(basis.get('id'))
-        and all(basis.get(k)==daily_basis.get(k) for k in ('id','mode','effective_at'))
-        and basis.get('session_basis')==document.get('session_basis')
-        and 'price_adjustment_or_corporate_actions_unverified' not in
-            {r['code'] for r in daily['analysis']['risks']})
+        and (standalone or all(basis.get(k)==daily_basis.get(k) for k in ('id','mode','effective_at')))
+        and bool(basis.get('session_basis'))
+        and (standalone or (basis.get('session_basis')==document.get('session_basis')
+            and 'price_adjustment_or_corporate_actions_unverified' not in
+            {r['code'] for r in daily['analysis']['risks']})))
     try:basis_ok=basis_ok and timestamp(basis['effective_at'])<=timestamp(basis['available_at'])<=cutoff
     except (KeyError,TypeError,ValueError):basis_ok=False
     if not scope_ok:reason='weekly_daily_scope_mismatch'
     elif not basis_ok:reason='weekly_daily_price_basis_unverified_or_mismatch'
-    elif not daily['reference_close']:reason='daily_reference_close_unavailable'
+    elif not standalone and not daily['reference_close']:reason='daily_reference_close_unavailable'
     elif not known(calendar,cutoff) or calendar.get('verified') is not True:reason='weekly_calendar_unverified'
     else:
         try:
             if timestamp(calendar['as_of'])!=cutoff:raise ValueError()
             reference=calendar['reference_week']
             start,end=date.fromisoformat(reference['start']),date.fromisoformat(reference['end'])
-            close_day=date.fromisoformat(daily['reference_close']['trade_date'])
+            close_day=date.fromisoformat(context['reference_date']) if standalone else date.fromisoformat(daily['reference_close']['trade_date'])
             if not start<=close_day<=end or not 0<=(end-start).days<=6:raise ValueError()
             periods=sorted(calendar['completed_weeks'],key=lambda p:p['start'])
             starts=[date.fromisoformat(p['start']) for p in periods]
@@ -122,16 +132,19 @@ def analyze_hybrid(document,pages,*,weekly_data_origin,weekly_price_basis=None,
             definition='prior_52_completed_calendar_weeks_excluding_reference_week',required_weeks=52,
             prior_high=str(high) if high is not None else None,
             high_dates=[p['bar_date'] for p in periods if valid[p['bar_date']][0].high==high] if high is not None else [],
-            distance_below_high_percent=str((high-close)/high*100) if high is not None else None,
-            rise_to_high_percent=str((high/close-1)*100) if high is not None else None,
-            close_breakout_confirmed=close>high if high is not None else None,
-            high_retest=close==high if high is not None else None)
+            distance_below_high_percent=str((high-close)/high*100) if high is not None and close is not None else None,
+            rise_to_high_percent=str((high/close-1)*100) if high is not None and close is not None else None,
+            close_breakout_confirmed=close>high if high is not None and close is not None else None,
+            high_retest=close==high if high is not None and close is not None else None)
+        if standalone:
+            high52['close_comparison']=dict(status='unavailable',reason='daily_reference_close_unavailable')
     safe_periods=[{k:p.get(k) for k in ('start','end','bar_date')} for p in periods if isinstance(p,dict)]
     safe_reference={k:reference.get(k) for k in ('start','end')} if isinstance(reference,dict) else None
     result=dict(schema_version='arvis-hybrid-chart-v1',stock_code=daily['stock_code'],as_of=daily['as_of'],
         environment=daily['environment'],market=daily['market'],data_origin=daily['data_origin'],
         daily=daily,weekly=dict(api_id='ka10082',data_origin=weekly_data_origin,
             price_basis=deepcopy(basis) if known(basis,cutoff) else None,
+            as_of=daily['as_of'],base_date=(pages[0].request.base_dt if pages else None),
             reference_week=safe_reference,selected_periods=safe_periods,high52=high52,
             quarantine=held),high52_source='weekly',primary_high52=deepcopy(high52),order_signal=False,
         notice='완료 주봉 52주의 고점은 일봉 252거래일 고점과 다른 지표. 일봉 계산·후보·주문 계약은 유지.')

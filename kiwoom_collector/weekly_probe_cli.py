@@ -2,7 +2,8 @@
 
 python -m kiwoom_collector.weekly_probe_cli --stock-code 005930 --environment real
     --base-date YYYYMMDD --adjustment 1
-Execution also requires --daily-input analyst-input-v1.json --output-dir NEW_PATH
+Execution requires --output-dir NEW_PATH; --daily-input is optional.
+Without daily input, --as-of sets the analysis cutoff (default: current KST).
 and one of --replay-json FIXTURE, --saved-weekly-json CAPTURE, or explicitly
 approved --live. Live requires KIWOOM_ACCESS_TOKEN and the timezone-aware
 KIWOOM_ACCESS_TOKEN_EXPIRES_AT (more than 10 minutes remaining); OAuth
@@ -15,6 +16,7 @@ import os
 from pathlib import Path
 
 from . import weekly_chart as weekly
+from .daily_chart import fingerprint
 from .daily_supply_cli import HTTPTransport,ReplayTransport,identity
 from .daily_diagnostic import output_root,Redactor
 from .catalog_auth import credentials
@@ -70,7 +72,7 @@ def main(argv=None):
     p=argparse.ArgumentParser(description=__doc__,formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument('--stock-code',required=True);p.add_argument('--environment',choices=('mock','real'),required=True)
     p.add_argument('--base-date',required=True);p.add_argument('--adjustment',choices=('0','1'),required=True)
-    p.add_argument('--daily-input',type=Path);p.add_argument('--weekly-review-json',type=Path)
+    p.add_argument('--as-of');p.add_argument('--daily-input',type=Path);p.add_argument('--weekly-review-json',type=Path)
     p.add_argument('--output-dir',type=Path);p.add_argument('--max-pages',type=int,default=2)
     p.add_argument('--max-seconds',type=float,default=60)
     mode=p.add_mutually_exclusive_group()
@@ -86,20 +88,25 @@ def main(argv=None):
             print(json.dumps(dict(mode='plan_only',request=identity(request),path='/api/dostk/chart',
                 max_weekly_requests=args.max_pages,api_calls=0,oauth_calls=0,output_created=False)))
             return 0
-        if not args.daily_input or not args.output_dir:raise ValueError('daily_input_and_new_output_required')
+        if not args.output_dir:raise ValueError('new_output_required')
         if args.live and (not args.execute_approved or not args.quota_reviewed or not args.credentials_env_file):
             raise ValueError('weekly_live_approval_required')
         if args.live and datetime.strptime(args.base_date,'%Y%m%d').date()>datetime.now(KST).date():
             raise ValueError('future_weekly_base_date')
-        document,daily_provenance=read_json(args.daily_input)
-        analyze_context(document)  # validate before constructing any HTTP client
+        document=None;daily_provenance=None
+        cutoff=timestamp(args.as_of) if args.as_of else datetime.now(KST)
+        if cutoff>datetime.now(KST):raise ValueError('future_analysis_cutoff')
+        if args.daily_input:
+            document,daily_provenance=read_json(args.daily_input)
+            analyze_context(document)  # validate before constructing any HTTP client
+            if args.as_of and timestamp(document['as_of'])!=cutoff:raise ValueError('daily_cutoff_mismatch')
         origin='synthetic_fixture' if args.replay_json else 'api_response'
         if args.saved_weekly_json:
             capture,capture_provenance=read_json(args.saved_weekly_json)
             if capture.get('schema_version')!='weekly-capture-v1':raise ValueError('weekly_capture_version_required')
             if capture.get('collection_status') not in ('failed','collected_unverified'):raise ValueError('weekly_capture_status_invalid')
             origin=capture['data_origin']
-        if (document['stock_code']!=request.stock_code or document['environment']!=request.environment
+        if document is not None and (document['stock_code']!=request.stock_code or document['environment']!=request.environment
                 or document['data_origin']!=origin or document['market']!=request.market
                 or (document.get('price_basis') or {}).get('mode')!={'0':'original','1':'adjusted'}[request.adjustment]):
             raise ValueError('weekly_daily_input_scope_mismatch')
@@ -141,7 +148,17 @@ def main(argv=None):
             raise ValueError('weekly_review_page_binding_mismatch')
         report=analyze_hybrid(document,usable,weekly_data_origin=origin,
             weekly_price_basis=active_review.get('price_basis'),weekly_calendar=active_review.get('calendar'),
-            evidence=[WeeklyEvidence(**value) for value in active_review.get('evidence',())])
+            evidence=[WeeklyEvidence(**value) for value in active_review.get('evidence',())],
+            weekly_context=dict(stock_code=request.stock_code,environment=request.environment,market=request.market,
+                data_origin=origin,as_of=cutoff.isoformat(),
+                reference_date=datetime.strptime(request.base_dt,'%Y%m%d').date().isoformat()))
+        report['input_basis']=dict(weekly_adjustment=request.adjustment,weekly_base_date=request.base_dt,
+            weekly_as_of=report['as_of'],daily_as_of=document['as_of'] if document else None,
+            daily_price_basis=document.get('price_basis') if document else None,
+            comparability=('verified' if report['primary_high52']['status']=='available' else 'unverified')
+                if document else 'unavailable_no_daily_input')
+        report.pop('hybrid_reference')
+        report['hybrid_reference']=fingerprint(report)
         with (folder/'hybrid.json').open('x',encoding='utf-8') as target:
             json.dump(report,target,ensure_ascii=False,indent=2,allow_nan=False)
         summary=dict(module='weekly_probe',mode='live' if args.live else 'saved' if args.saved_weekly_json else 'replay',

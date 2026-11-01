@@ -49,6 +49,44 @@ class WeeklyProbeTests(unittest.TestCase):
             code=main(self.args+['--daily-input',str(self.daily),'--output-dir',str(folder)]+extra)
         return code,json.loads(output.getvalue())
 
+    def standalone(self,folder,review=True):
+        extra=['--weekly-review-json',str(self.review())] if review else []
+        with patch('sys.stdout',new_callable=io.StringIO):
+            code=main(self.args+['--as-of',self.doc['as_of'],'--output-dir',str(folder),
+                '--replay-json',str(self.fixture())]+extra)
+        return code,json.loads((folder/'hybrid.json').read_text(encoding='utf-8'))
+
+    def test_standalone_verified_high_without_daily_or_close_claims(self):
+        code,result=self.standalone(self.root/'standalone')
+        self.assertEqual(code,0)
+        self.assertEqual(result['primary_high52']['prior_high'],'153')
+        for key in ('distance_below_high_percent','rise_to_high_percent','close_breakout_confirmed','high_retest'):
+            self.assertIsNone(result['primary_high52'][key])
+        for n in (3,5,20,60,200):
+            self.assertEqual(result['daily']['moving_averages'][f'MA{n}']['status'],'unavailable')
+        self.assertEqual(result['daily']['supply_proxy']['status'],'unavailable')
+        self.assertIsNone(result['input_basis']['daily_price_basis'])
+        self.assertEqual(result['input_basis']['weekly_adjustment'],'1')
+        self.assertEqual(result['weekly']['as_of'],self.doc['as_of'])
+        self.assertNotIn('999999',json.dumps(result))
+
+    def test_standalone_unreviewed_remains_unavailable(self):
+        _,result=self.standalone(self.root/'unreviewed',review=False)
+        self.assertEqual(result['primary_high52']['status'],'unavailable')
+
+    def test_standalone_short_history_bad_basis_and_incomplete_evidence_fail_closed(self):
+        for kind in ('short','basis','incomplete','calendar'):
+            with self.subTest(kind=kind):
+                path=self.review();review=json.loads(path.read_text())
+                if kind=='short':review['calendar']['completed_weeks'].pop()
+                elif kind=='basis':review['price_basis']['mode']='original'
+                elif kind=='calendar':review['calendar']['verified']=False
+                else:review['evidence'][1]['status']='incomplete'
+                path.write_text(json.dumps(review))
+                with patch.object(self,'review',return_value=path):
+                    _,result=self.standalone(self.root/kind)
+                self.assertEqual(result['primary_high52']['status'],'unavailable')
+
     def test_default_plan_never_reads_files_credentials_or_constructs_http(self):
         with patch('kiwoom_collector.weekly_probe_cli.read_json',side_effect=AssertionError('file read')),\
              patch('kiwoom_collector.weekly_probe_cli.credentials',side_effect=AssertionError('credentials')),\
