@@ -56,3 +56,9 @@ These are test environment portability/readiness defects. No production collecto
 - Normal-user local validation: 141 AST/import checks; 242 related tests PASS in 26.578 seconds; all 1,150 regression tests PASS in 119.504 seconds, exit code 0, no failures/errors/skips. External connections and original operational-data access remained blocked. CI results remain authoritative for the hosted runner and must be checked on the final pushed SHA before merge.
 
 Main merge and operational deployment remain separately authorized work. This fix does not validate real-server token issuance, hospital scheduler-account DPAPI restoration or analyst decisions on real market data.
+
+## Profile-independent failure contract
+
+`test_failed_encryption_stops_before_oauth` is retained under `CacheSecurityContractTests` instead of the Windows-only `ProtectedCacheTests`. It injects an always-failing synthetic protector, explicitly forbids constructing WindowsDPAPI, and still requires cache_write_failed, zero issuer calls and no token-cache file. This tests the fail-closed contract without a loaded Windows profile; it is not a substitute for real encryption. Actual encrypted restoration, scope separation, corruption and multiprocessing remain in the Windows DPAPI integration class. No additional skip or test removal is introduced; the total remains 1,150 tests.
+
+After separation, all 19 profile-independent token/security/integration checks passed under the restricted account. Under the normal user, all 242 related checks passed in 27.687 seconds and all 1,150 regression tests passed in 122.359 seconds, with no failures/errors/skips. The token-manager test method names and total count are preserved; only the failure contract's class placement changes.
