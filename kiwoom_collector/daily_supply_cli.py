@@ -36,10 +36,11 @@ class ReplayTransport:
 
 class HTTPTransport:
     origin='api_response'
+    api_ids=('ka10081',)
     def __init__(self,creds,plans,access_token,*,approved=False):
         if approved is not True or not isinstance(access_token,str) or not access_token or len(access_token)>4096 or any(c.isspace() for c in access_token):
             raise ValueError('explicit_approval_and_existing_token_required')
-        if any(p.environment!=creds.environment or p.api_id!='ka10081' for p in plans):raise ValueError('http_plan_scope_invalid')
+        if any(p.environment!=creds.environment or p.api_id not in self.api_ids for p in plans):raise ValueError('http_plan_scope_invalid')
         if creds.base_url!={'mock':'https://mockapi.kiwoom.com','real':'https://api.kiwoom.com'}[creds.environment]:
             raise ValueError('http_host_not_allowed')
         self.allowed={json.dumps(identity(p),sort_keys=True) for p in plans}
