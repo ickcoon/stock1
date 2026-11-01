@@ -90,7 +90,7 @@ class MasterAdapterIntegrationTests(unittest.TestCase):
         self.fixture=db_fixture.AMDataDiagnosticTests('test_full_synthetic_one_pass_checks_readiness_and_separate_times')
         self.fixture.setUp();self.addCleanup(self.fixture.doCleanups)
         self.db=self.fixture.db
-        self.root=self.fixture.root
+        self.root=self.fixture.root.resolve()
         self.patch=patch.multiple(master,MASTER_ROOT=self.root/'master',PROJECT=self.root)
         self.patch.start();self.addCleanup(self.patch.stop)
         self.master=master.create_master('integration',synthetic=True,at=EARLY)

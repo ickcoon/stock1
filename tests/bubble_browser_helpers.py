@@ -52,7 +52,21 @@ def browser_page(html, folder, width=1360, height=900):
         command('Emulation.setTouchEmulationEnabled',dict(enabled=True,maxTouchPoints=1))
         frame=command('Page.getFrameTree')['frameTree']['frame']['id']
         command('Page.setDocumentContent',dict(frameId=frame,html=html))
-        time.sleep(.15)
+        # setDocumentContent can return before srcdoc documents and fonts load.
+        # A fixed sleep races on hosted runners; fail on a bounded readiness wait.
+        ready = '''(()=>{
+            function loaded(d) {
+                if (!d || d.readyState!=='complete' || !d.body || d.fonts.status!=='loaded') return false;
+                return [...d.querySelectorAll('iframe')].every(f =>
+                    (!f.hasAttribute('srcdoc') || f.contentDocument?.URL==='about:srcdoc') && loaded(f.contentDocument));
+            }
+            return loaded(document);
+        })()'''
+        deadline=time.monotonic()+10
+        while not evaluate(ready):
+            if time.monotonic()>=deadline:
+                raise AssertionError('browser document/srcdoc/font readiness deadline')
+            time.sleep(.05)
         yield command,evaluate,click
     finally:
         if socket:
