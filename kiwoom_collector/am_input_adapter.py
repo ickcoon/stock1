@@ -129,7 +129,9 @@ def adapt(ranking_db, *, trade_date, cutoff_at, environment, evidence=None,
                      or manifest.get('synthetic') is not synthetic):
         raise ValueError('verification_manifest_scope_invalid')
     sources = [read_sources(ranking_db)]
-    if turnover_db is not None: sources.append(read_sources(turnover_db, role='turnover'))
+    if turnover_db is not None:
+        paths = turnover_db if isinstance(turnover_db, (list, tuple)) else (turnover_db,)
+        sources.extend(read_sources(path, role='turnover') for path in paths)
     if capital_json is not None: sources.append(read_capital(capital_json))
     source = 'fixture' if synthetic else 'readonly_adapter'
     document = dict(schema_version=am.INPUT_SCHEMA if synthetic else am.ADAPTER_INPUT_SCHEMA,

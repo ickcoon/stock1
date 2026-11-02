@@ -230,6 +230,61 @@ def format_telegram(report):
     return text
 
 
+def format_mobile(report):
+    """Compact final briefing; rankings and eligibility remain engine-owned."""
+    validate(report)
+    cutoff = am.instant(report['selection_cutoff_at'])
+    lines = [f"[ARVIS 오전 주도주 | {cutoff.strftime('%H:%M')}]",
+             report['trade_date'] + ' · ' + ('합성 테스트' if report['source_kind']=='fixture' else '수집 자료 관측'),
+             '', '시장 주도 섹터 TOP 3']
+    for sector in report['sectors']:
+        lines.append(f"{sector['rank']}. {sector['name']}")
+        for index, candidate in enumerate(sector['leaders'], 1):
+            change = Decimal(candidate['metrics']['change_pct']['value'])
+            amount = Decimal(candidate['metrics']['turnover']['value']) / EOK
+            name = candidate['name'] or candidate['stock_code']
+            lines.append(f"  {index}) {name} {change:+g}% / {amount:,.0f}억")
+    if not report['sectors']:
+        lines.append('선정 보류: 검증된 섹터 동반상승 근거 부족')
+    elif len(report['sectors']) < 3:
+        lines.append('나머지 섹터: 선정 보류')
+    held = [c for c in report['candidates'] if c['status']=='held']
+    if held:
+        lines.append('관측 종목(선정 아님): ' + ', '.join(c['name'] or c['stock_code'] for c in held[:5]))
+    elif not report['sectors']:
+        codes = sorted({s['stk_cd'] for r in report['input_document']['rankings'] for s in r.get('stocks',[])})
+        if codes:
+            lines.append('관측 코드(적격성 미확인·선정 아님): ' + ', '.join(codes[:5]))
+        else:
+            lines.append('0198·0186 유효 자료 없음/수집 실패: 선정 보류')
+    missing = sorted({m for c in held for m in c['missing_evidence']})
+    labels = dict(incomplete_observations='0198 관측 누락/지연',
+                  intraday_turnover_unverified='0186 거래대금 미검증/누락',
+                  market_cap_unverified='시총 미검증', sector_missing_or_ambiguous='섹터 미검증',
+                  repeated_attention_insufficient='반복 관심 근거 부족',
+                  positive_change_unverified='동반상승 미검증', change_pct_unverified='등락률 미검증',
+                  market_cap_not_above_3000_eok='시총 기준 미달')
+    lines += ['', '[판정] ' + ('잠정' if report['sectors'] else '보류'),
+              '[근거] 조회순위 집중·검증된 거래대금·섹터 동반상승' if report['sectors'] else '[근거] 선정 기준 충족 자료 부족',
+              '[주의] ' + (' / '.join(labels.get(m,m) for m in missing) if missing else '실전 추천 검증 미완료')]
+    rankings = [r for r in report['input_document']['rankings']
+                if r.get('slot') in report['completeness']['accepted_slots']]
+    turnovers = [c['metrics']['turnover'] for c in report['candidates'] if c['metrics']['turnover']]
+    def times(items):
+        if not items:
+            return '유효 자료 없음'
+        observed = max(am.instant(i['observed_at']) for i in items).strftime('%H:%M:%S')
+        received = max(am.instant(i['received_at']) for i in items).strftime('%H:%M:%S')
+        return f'관측 {observed} / 수신 {received}'
+    lines += ['0198: ' + times(rankings), '0186: ' + times(turnovers),
+              '기준시각 이후 수집·수신 자료 제외']
+    lines.append('관측 후보 · 매매 확정 신호 아님')
+    text = '\n'.join(lines)
+    if len(text.encode('utf-16-le'))//2 > 4096:
+        raise ValueError('message_too_long')
+    return text
+
+
 def render(report):
     text = format_telegram(report)
     payload = am.canonical(report).replace('&', '\\u0026').replace('<', '\\u003c').replace('>', '\\u003e')

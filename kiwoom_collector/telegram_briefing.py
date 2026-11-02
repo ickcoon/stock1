@@ -319,6 +319,8 @@ def summary(report, *, attached=False):
         return observation_summary(report)
     if report.get('schema_version') == 'am-sector-briefing-v1':
         from . import am_briefing
+        if report.get('input_document', {}).get('briefing_format') == 'c12ac-final-v1':
+            return am_briefing.format_mobile(report)
         return am_briefing.format_telegram(report)
     validate(report)
     lines = ['아르비스 오전 브리핑', report['trade_date']+' | 기준 '+am.instant(report['selection_cutoff_at']).strftime('%H:%M:%S')+' KST',

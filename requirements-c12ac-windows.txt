@@ -1,0 +1,4 @@
+# Windows C12-X/C12-AC workflow, including 0186 and Telegram native TLS.
+-r requirements.txt
+-r requirements-weekly-windows.txt
+# Optional C14 PNG rendering: install requirements-chart.txt separately.

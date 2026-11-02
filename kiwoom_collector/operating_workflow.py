@@ -55,18 +55,17 @@ class Workflow:
         write_new(self.root/'reports/workflow'/day/(slot.replace(':','')+'.json'),ledger)
 
     def review(self,store,due,turnover_path):
+        if due.strftime('%H:%M') in schedule.AM_DECISION_SLOTS:
+            return self.morning_review(store,due,turnover_path)
         day=due.date().isoformat();slot=due.strftime('%H:%M')
         policy=ObservationPolicy()
-        if slot in schedule.AM_DECISION_SLOTS:
-            remaining=(policy.deadline(due)-self.clock()).total_seconds()
-            if remaining>0:self.sleep(remaining)
         capture=online_snapshot.capture_snapshot(store.path,name='c12x-'+due.strftime('%Y%m%d-%H%M'))
         if capture.get('status')!='success':return dict(status='held',reason='snapshot_unavailable')
         snapshot=Path(capture['snapshot_path'])
         generated=self.clock().isoformat()
         folder=self.root/'reports'/('c12x-'+due.strftime('%Y%m%d-%H%M'))
         folder.mkdir(parents=True,exist_ok=False)
-        cutoff=due if slot in schedule.AM_DECISION_SLOTS else due.replace(hour=9,minute=50)
+        cutoff=due.replace(hour=9,minute=50)
         master=self.settings.get('master_db')
         evidence_path=self.settings.get('verification_manifest')
         evidence=json.loads(Path(evidence_path).read_text(encoding='utf-8')) if evidence_path else None
@@ -76,6 +75,27 @@ class Workflow:
             capital_json=self.settings.get('am_capital_json'))
         analysis=am_briefing.analyze(document,generated_at=generated)
         write_new(folder/'c12.json',analysis)
+        step6,chart,run,turn=self.review_artifacts(snapshot,turnover_path,due,analysis,folder,generated)
+        state=None
+        decision=session_review.afternoon_review(step6 or {'rows':[]},slot)
+        report=self.observation_report(analysis,run,turn,decision,generated,due)
+        write_new(folder/'telegram.json',report)
+        text=tg.summary(report)
+        with (folder/'telegram.txt').open('x',encoding='utf-8') as f:f.write(text)
+        delivery=dict(status='disabled')
+        if decision['send'] and self.settings.get('telegram_send_enabled') is True:
+            config=tg.Configuration.from_environment()
+            delivery=tg.deliver(report,text,None,config,allow_readonly_report=True,windows_trust_store=True,
+                state_root=self.settings['notification_state'])
+        if step6 and (slot=='15:00' or decision.get('candidates') or (state or {}).get('selected')):
+            selected=(state or {}).get('selected') or [r['stock_code'] for r in decision.get('candidates',[])]
+            for episode in session_review.tracking_records(step6,selected,captured_at=generated):
+                path=self.root/'reports/tracking'/day/(episode['episode_id']+'.json')
+                if not path.exists():write_new(path,episode)
+        return dict(status='reviewed',decision=decision,delivery=delivery,
+            c14_counts=chart['counts'] if chart else {},report=str(folder))
+
+    def review_artifacts(self,snapshot,turnover_path,due,analysis,folder,generated):
         ranking=adapter.read_sources(snapshot)
         runs=[r for r in ranking['records'] if r['kind']=='ranking' and r['scheduled_at']==due.isoformat()]
         run=runs[0] if len(runs)==1 and runs[0]['status']=='success' else None
@@ -98,34 +118,57 @@ class Workflow:
             if step6:
                 with (folder/'dashboard.html').open('x',encoding='utf-8') as f:
                     f.write(eligibility_dashboard.render(bundle,top5_json=chart_dir/'top5.json',output_html=folder/'dashboard.html'))
-        decision=None;state=None
-        if slot in schedule.AM_DECISION_SLOTS:
-            previous=sorted((self.root/'reports/decisions'/day).glob('09*.json'))
-            state=json.loads(previous[-1].read_text(encoding='utf-8')) if previous else None
-            if analysis.get('candidate_filter'):
-                state,decision=session_review.morning_transition(analysis,slot,state)
-                write_new(self.root/'reports/decisions'/day/(slot.replace(':','')+'.json'),state)
-            else:decision=dict(action='held_missing_master',send=False)
-            report=analysis
-        else:
-            decision=session_review.afternoon_review(step6 or {'rows':[]},slot)
-            report=self.observation_report(analysis,run,turn,decision,generated,due)
-        write_new(folder/'telegram.json',report)
-        text=tg.summary(report)
-        with (folder/'telegram.txt').open('x',encoding='utf-8') as f:f.write(text)
-        delivery=dict(status='disabled')
-        if decision['send'] and self.settings.get('telegram_send_enabled') is True:
-            config=tg.Configuration.from_environment()
-            delivery=tg.deliver(report,text,None,config,allow_readonly_report=True,windows_trust_store=True,
-                state_root=self.settings['notification_state'],
-                decision_revision=decision.get('revision') if slot in schedule.AM_DECISION_SLOTS else None)
-        if step6 and (slot=='15:00' or decision.get('candidates') or (state or {}).get('selected')):
-            selected=(state or {}).get('selected') or [r['stock_code'] for r in decision.get('candidates',[])]
-            for episode in session_review.tracking_records(step6,selected,captured_at=generated):
-                path=self.root/'reports/tracking'/day/(episode['episode_id']+'.json')
-                if not path.exists():write_new(path,episode)
-        return dict(status='reviewed',decision=decision,delivery=delivery,
-            c14_counts=chart['counts'] if chart else {},report=str(folder))
+        return step6,chart,run,turn
+
+    def morning_review(self,store,due,turnover_path):
+        from . import morning_briefing
+        # Never recapture/reconstruct an already frozen phase on restart.
+        frozen=self.root/'reports'/('c12ac-'+due.strftime('%Y%m%d-%H%M'))/'telegram.json'
+        document=morning_briefing.empty_document(due)
+        reason=None
+        snapshot=None
+        if not frozen.exists():
+            try:
+                remaining=(ObservationPolicy().deadline(due)-self.clock()).total_seconds()
+                if remaining>0:self.sleep(remaining)
+                capture=online_snapshot.capture_snapshot(store.path,name='c12ac-'+due.strftime('%Y%m%d-%H%M'))
+                if capture.get('status')!='success':
+                    raise ValueError('snapshot_unavailable')
+                evidence_path=self.settings.get('verification_manifest')
+                evidence=json.loads(Path(evidence_path).read_text(encoding='utf-8')) if evidence_path else None
+                master=self.settings.get('master_db')
+                snapshot=Path(capture['snapshot_path'])
+                document=adapter.adapt(snapshot,trade_date=due.date().isoformat(),
+                    cutoff_at=due.isoformat(),environment='real',turnover_db=turnover_path,
+                    evidence=evidence,test_mode=False,synthetic=False,master_db=master,
+                    candidate_filter=bool(master),observation_policy=ObservationPolicy().document(),
+                    capital_json=self.settings.get('am_capital_json'))
+                # Validate here so malformed/duplicate source data produces a held report.
+                am_briefing.analyze(morning_briefing.freeze(document),generated_at=self.clock().isoformat())
+            except Exception as error:
+                reason=type(error).__name__  # Never persist exception text/secrets.
+                document=morning_briefing.empty_document(due)
+                snapshot=None
+        result=morning_briefing.process(self,due,document,reason=reason)
+        # Ancillary outputs reuse the original pipeline and cannot suppress text.
+        if snapshot is not None:
+            try:
+                folder=self.root/'reports'/('c12x-'+due.strftime('%Y%m%d-%H%M'))
+                folder.mkdir(parents=True,exist_ok=False)
+                report=json.loads((Path(result['report'])/'telegram.json').read_text(encoding='utf-8'))
+                generated=report['analysis']['generated_at']
+                write_new(folder/'c12.json',report)
+                step6,chart,_,_=self.review_artifacts(snapshot,turnover_path,due,report,folder,generated)
+                result['c14_counts']=chart['counts'] if chart else {}
+                state_path=self.root/'reports/decisions'/due.date().isoformat()/(due.strftime('%H%M')+'.json')
+                state=json.loads(state_path.read_text(encoding='utf-8'))
+                if step6 and state.get('selected'):
+                    for episode in session_review.tracking_records(step6,state['selected'],captured_at=generated):
+                        path=self.root/'reports/tracking'/due.date().isoformat()/(episode['episode_id']+'.json')
+                        if not path.exists():write_new(path,episode)
+            except Exception as error:
+                result['ancillary_status']=dict(status='held',reason=type(error).__name__)
+        return result
 
     @staticmethod
     def observation_report(analysis,run,turn,decision,generated,due):

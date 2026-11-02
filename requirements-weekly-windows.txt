@@ -1,2 +1,3 @@
-# Optional Windows trust store for isolated weekly sessions (Python >=3.10).
+# Native Windows TLS (Python >=3.10): weekly sessions and C12-X/C12-AC workflow.
+# Required when those execution paths call configure_windows_trust.
 truststore==0.10.5
