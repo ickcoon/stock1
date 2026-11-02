@@ -21,6 +21,7 @@ from . import media_policy
 PROJECT = Path(__file__).resolve().parent.parent
 REPORTS = PROJECT / 'reports'
 STATE = PROJECT / 'notification_state'
+OBSERVATION_SCHEMA = 'arvis-observation-briefing-v1'
 MAX_JSON = 2 * 1024 * 1024
 MAX_HTML = 4 * 1024 * 1024  # Deliberately below Telegram's document limit.
 TOKEN = re.compile(r'[0-9]{6,15}:[A-Za-z0-9_-]{20,100}', re.ASCII)
@@ -118,6 +119,9 @@ def digest(value):
 
 def validate(report, secrets=()):
     scan(report, secrets)
+    if isinstance(report, dict) and report.get('schema_version') == OBSERVATION_SCHEMA:
+        validate_observation(report)
+        return report
     if isinstance(report, dict) and report.get('schema_version') == 'am-sector-briefing-v1':
         from . import am_briefing
         am_briefing.validate(report)
@@ -220,7 +224,99 @@ def validate(report, secrets=()):
     return report
 
 
+def validate_observation(report):
+    """Incomplete live observations only; never promotes rows to C12 leaders."""
+    from . import am_briefing
+    pm=report.get('selection_type')=='PM_CLOSING_REVIEW'
+    keys(report, set('schema_version selection_type source_kind trade_date selection_cutoff_at generated_at environment market candidate_confirmed d0_storage_allowed analysis observation step6d charts evaluation_reference'.split()) | ({'pm_candidates','pm_reviewable'} if pm else set()))
+    require(report['selection_type'] in ('OBSERVATION_REVIEW','PM_CLOSING_REVIEW') and report['source_kind'] == 'readonly_adapter')
+    require(report['environment'] == 'real' and report['market'] == 'KRX')
+    require(report['candidate_confirmed'] is False and report['d0_storage_allowed'] is False)
+    at = am.instant(report['selection_cutoff_at'])
+    require(at.date().isoformat() == report['trade_date'] and am.instant(report['generated_at']) >= at)
+    am_briefing.validate(report['analysis'])
+    analysis = report['analysis']
+    require(analysis['source_kind'] == 'readonly_adapter' and analysis['environment'] == 'real'
+            and analysis['market'] == 'KRX' and analysis['trade_date'] == report['trade_date'])
+    require(pm or not analysis['sectors'], 'observation_report_requires_held_selection')
+    require(am.instant(analysis['selection_cutoff_at']) <= at)
+    data = report['observation']
+    keys(data, set('ranking_at turnover_received_at turnover_rows pagination_complete stocks'.split()))
+    require(data['ranking_at'] in (None,report['selection_cutoff_at']))
+    if data['turnover_received_at'] is not None:
+        received = am.instant(data['turnover_received_at'])
+        require(received.date() == at.date() and received <= am.instant(report['generated_at']))
+    else:require(data['turnover_rows']==0)
+    require(type(data['turnover_rows']) is int and 0 <= data['turnover_rows'] <= 100)
+    require(type(data['pagination_complete']) is bool)
+    rows = data['stocks']
+    require(isinstance(rows, list) and 0 <= len(rows) <= 20)
+    require((data['ranking_at'] is not None) or not rows)
+    codes, ranks = set(), set()
+    for row in rows:
+        keys(row, set('stock_code stock_name rank change_percent turnover_million_krw'.split()))
+        require(isinstance(row['stock_code'], str) and re.fullmatch(r'[0-9A-Z]{6}', row['stock_code']))
+        require(type(row['rank']) is int and 1 <= row['rank'] <= 20)
+        require(row['stock_code'] not in codes and row['rank'] not in ranks)
+        codes.add(row['stock_code']); ranks.add(row['rank'])
+        am.label(row['stock_name'])
+        for key in ('change_percent', 'turnover_million_krw'):
+            value = row[key]
+            require(value is None or (isinstance(value, str) and am.number(value) is not None))
+        require(row['turnover_million_krw'] is None or am.number(row['turnover_million_krw']) >= 0)
+    if pm:
+        candidates=report['pm_candidates']
+        require(isinstance(candidates,list) and len(candidates)<=5)
+        reviewed=report['pm_reviewable']
+        require(isinstance(reviewed,list) and len(reviewed)<=len(rows) and candidates==reviewed[:5])
+        selected=set()
+        for item in reviewed:
+            keys(item,{'stock_code','qualification'})
+            require(item['stock_code'] in codes and item['stock_code'] not in selected)
+            selected.add(item['stock_code'])
+            q=item['qualification']
+            require(q.get('final_review_allowed') is True and q.get('review_status')=='검토 가능'
+                    and q.get('candidate_confirmed') is False and bool(q.get('checks'))
+                    and all(v is True for v in q['checks'].values()),'pm_evidence_incomplete')
+        require(report['step6d']==dict(verified=len(reviewed),held=len(rows)-len(reviewed)))
+    else:
+        require(report['step6d'] == dict(verified=0, held=len(rows)), 'observation_eligibility_must_remain_held')
+    require(report['charts'] == dict(available=0, unavailable=len(rows)), 'observation_chart_data_unavailable')
+    require(report['evaluation_reference'] == digest({k:v for k,v in report.items() if k != 'evaluation_reference'}), 'report_fingerprint_mismatch')
+
+
+def observation_summary(report):
+    validate(report)
+    data = report['observation']
+    pm=report['selection_type']=='PM_CLOSING_REVIEW'
+    lines = ['ARVIS 종가매매 후보 검토 · provisional' if pm else 'ARVIS 실전 관측 연결 테스트 · provisional',
+             report['trade_date'] + ' | 0198 수집 ' + (am.instant(data['ranking_at']).strftime('%H:%M:%S')+' KST' if data['ranking_at'] else '미확보'),
+             '0186 수신 ' + (am.instant(data['turnover_received_at']).strftime('%H:%M:%S')+' KST' if data['turnover_received_at'] else '미확인') + ' | real / KRX 요청(0186)',
+             f"0198 {len(data['stocks'])}종목 / 0186 {data['turnover_rows']}종목 · " + ('자료 없음' if not data['turnover_rows'] else '페이지 종료 확인' if data['pagination_complete'] else '첫 페이지 partial'),
+             '주도섹터 Top3: 미확인 · 섹터별 핵심 종목: 미확인',
+             ('오후 핵심 후보는 아래 Step 6-D 검토 결과로 구분' if pm else 'C12 후보 Top5: 보류 · 반복 관측/시총/섹터/검증 근거 부족'),
+             '0198 조회순위 상위 관측 (C12 선정 결과 아님):']
+    for row in sorted(data['stocks'], key=lambda r:r['rank'])[:5]:
+        change = row['change_percent'] + '%' if row['change_percent'] is not None else '미확인'
+        amount = row['turnover_million_krw'] + ' 백만원(명세 기준)' if row['turnover_million_krw'] is not None else '미확인'
+        lines.append(f"{row['rank']}. {row['stock_name']} {row['stock_code']} | 등락률 {change} | 거래대금 {amount}")
+    if pm:
+        selected=report['pm_candidates']
+        label='15:00 핵심 검토 후보' if report['selection_cutoff_at'][11:16]>='15:00' else '14:30 사전 검토'
+        lines.append(label+': '+(', '.join(r['stock_code'] for r in selected) if selected else '근거 부족으로 보류'))
+    lines += [f"Step 6-D: {report['step6d']['verified']}종목 검토 가능 / {report['step6d']['held']}종목 보류 · 매매 확정 없음",
+              'C14: 저장 일봉/주봉 미확보 · 차트 미확보',
+              '위험: HTS 단위 대조/누적 범위/시장 시각/0198 시장 범위 미검증. 미확인 값을 추정하지 않음.',
+              '오전 분석 기준 ' + am.instant(report['analysis']['selection_cutoff_at']).strftime('%H:%M') + ' 이후 관측을 과거 슬롯에 소급하지 않음.',
+              '매매 확정·주문 신호 아님 · '+('원본 관측 보존' if pm else '정기 자동 보고 미활성')]
+    text = '\n'.join(lines)
+    require(len(text.encode('utf-16-le'))//2 <= 4096, 'message_too_long')
+    return text
+
+
 def summary(report, *, attached=False):
+    if report.get('schema_version') == OBSERVATION_SCHEMA:
+        return observation_summary(report)
     if report.get('schema_version') == 'am-sector-briefing-v1':
         from . import am_briefing
         return am_briefing.format_telegram(report)
@@ -254,6 +350,9 @@ def summary(report, *, attached=False):
 
 
 def render_report(report):
+    if report.get('schema_version') == OBSERVATION_SCHEMA:
+        from html import escape
+        return '<!doctype html><html lang="ko"><meta charset="utf-8"><title>ARVIS 실전 관측</title><pre>'+escape(observation_summary(report))+'</pre></html>'
     if report.get('schema_version') == 'am-sector-briefing-v1':
         from . import am_briefing
         return am_briefing.render(report)
@@ -305,11 +404,46 @@ class Configuration:
     chat_id: str = field(repr=False)
     allowed: tuple = field(repr=False)
 
+    @staticmethod
+    def protected_path():
+        base=os.environ.get('LOCALAPPDATA')
+        require(bool(base),'configuration_required')
+        return Path(base)/'Stock1/credentials/telegram-config.dpapi'
+
+    def save_protected(self):
+        """Reuse C13's current-user DPAPI; never write a plaintext fallback."""
+        from .token_cache import WindowsDPAPI
+        path=self.protected_path()
+        require(path.parent.is_dir() and path.parent.resolve()==path.parent.absolute()
+                and not path.is_symlink(),'secure_configuration_unreadable')
+        require(not path.exists(),'existing_secure_configuration_preserved')
+        # Check the same shape the environment loader accepts.
+        require(TOKEN.fullmatch(self.token) and CHAT.fullmatch(self.chat_id)
+                and self.chat_id in self.allowed and all(CHAT.fullmatch(v) for v in self.allowed))
+        encrypted=WindowsDPAPI().protect(json.dumps(dict(version=1,kind='arvis-telegram-config-v1',
+            token=self.token,chat_id=self.chat_id,allowed=list(self.allowed))).encode('utf-8'))
+        with path.open('xb') as stream:stream.write(encrypted);stream.flush();os.fsync(stream.fileno())
+
     @classmethod
     def from_environment(cls):
         token = os.environ.get('ARVIS_TELEGRAM_BOT_TOKEN','').strip()
         chat = os.environ.get('ARVIS_TELEGRAM_CHAT_ID','').strip()
         allowed = tuple(v.strip() for v in os.environ.get('ARVIS_TELEGRAM_ALLOWED_CHAT_IDS','').split(',') if v.strip())
+        if not any((token,chat,allowed)) and os.environ.get('LOCALAPPDATA'):
+            path=cls.protected_path()
+            if path.exists():
+                try:
+                    from .token_cache import WindowsDPAPI
+                    require(not path.is_symlink() and path.parent.resolve()==path.parent.absolute()
+                            and path.stat().st_size<=65536)
+                    data=json.loads(WindowsDPAPI().unprotect(path.read_bytes()).decode('utf-8'),object_pairs_hook=unique_object)
+                    keys(data,{'version','kind','token','chat_id','allowed'})
+                    require(data['version']==1 and data['kind']=='arvis-telegram-config-v1')
+                    token=data['token'].strip();chat=data['chat_id'].strip()
+                    require(isinstance(data['allowed'],list))
+                    allowed=tuple(v.strip() for v in data['allowed'])
+                except Exception:
+                    raise BriefingError('secure_configuration_unreadable') from None
         require(bool(TOKEN.fullmatch(token)), 'configuration_required')
         require(bool(CHAT.fullmatch(chat)) and bool(allowed) and all(CHAT.fullmatch(v) for v in allowed), 'private_chat_allowlist_required')
         require(chat in allowed, 'recipient_not_allowed')
@@ -374,11 +508,25 @@ def api_call(session, config, method, *, text=None, html=None, audio=None):
         raise telegram_transport_error(error,method,stage,http_status) from None
 
 
-def deliver(report, text, html, config, *, session_factory=None, voice=None, voice_method='sendVoice', voice_only=False):
+def reservation_root(shared=None):
+    if shared is None:
+        root = STATE.resolve()
+        require(root == PROJECT.resolve()/'notification_state', 'invalid_state_root')
+        return root
+    supplied = Path(shared)
+    require(supplied.is_absolute() and not str(supplied).startswith('\\\\'), 'invalid_state_root')
+    require(supplied.name == 'notification_state' and supplied.is_dir(), 'invalid_state_root')
+    require(not any(p.is_symlink() for p in (supplied,*supplied.parents)), 'invalid_state_root')
+    return supplied.resolve()
+
+
+def deliver(report, text, html, config, *, session_factory=None, voice=None, voice_method='sendVoice', voice_only=False, allow_readonly_report=False, windows_trust_store=False, state_root=None, decision_revision=None):
     """Explicit-send only entry point. Reservation survives all failures; no retries."""
     if voice is not None or voice_only:
         media_policy.require_legacy_media()
-    require(report.get('source_kind') != 'readonly_adapter', 'readonly_report_not_deliverable')
+    require(type(allow_readonly_report) is bool, 'invalid_readonly_delivery_option')
+    require(type(windows_trust_store) is bool, 'invalid_windows_trust_option')
+    require(report.get('source_kind') != 'readonly_adapter' or allow_readonly_report, 'readonly_report_not_deliverable')
     require(TOKEN.fullmatch(config.token) and CHAT.fullmatch(config.chat_id) and config.chat_id in config.allowed, 'recipient_not_allowed')
     require(type(voice_only) is bool and (not voice_only or (voice is not None and html is None)), 'invalid_voice_only_request')
     validate(report, (config.token,config.chat_id))
@@ -398,11 +546,29 @@ def deliver(report, text, html, config, *, session_factory=None, voice=None, voi
             voice=None;voice_status='test_audio_text_only'
         else:
             voice_status='ready'
-    root = STATE.resolve()
-    require(root == PROJECT.resolve()/'notification_state', 'invalid_state_root')
+    root = reservation_root(state_root)
     root.mkdir(exist_ok=True)
     scope = [report['trade_date'], report['selection_type'], delivery_schema(report), report['environment'],
              report['market'], hashlib.sha256(config.chat_id.encode()).hexdigest()]
+    decision_signature=None
+    revision_scope=scope
+    if decision_revision is not None:
+        require(type(decision_revision) is int and 1<=decision_revision<=3 and not voice_only and voice is None)
+        require(report['schema_version']=='am-sector-briefing-v1' and report['source_kind']=='readonly_adapter')
+        from .c12_chart_bridge import published_top
+        selected=published_top(report)
+        decision_signature=digest(dict(codes=sorted(r['stock_code'] for r in selected),
+            sector=report['sectors'][0]['name'] if report['sectors'] else None))
+        if decision_revision>1:
+            previous_scope=scope if decision_revision==2 else scope+['am-revision',decision_revision-1]
+            previous_path=root/(digest(previous_scope)+'.json')
+            require(previous_path.is_file() and not previous_path.is_symlink(),'previous_delivery_unconfirmed')
+            with previous_path.open(encoding='utf-8') as stream:previous=json.loads(stream.read(4097))
+            require(previous.get('status')=='sent' and previous.get('decision_revision')==decision_revision-1,
+                    'previous_delivery_unconfirmed')
+            require(previous.get('decision_signature') and previous['decision_signature']!=decision_signature,
+                    'important_selection_change_required')
+            revision_scope=scope+['am-revision',decision_revision]
     if voice_only:
         legacy = root/(digest(scope)+'.json')
         require(not legacy.is_symlink(), 'invalid_state_file')
@@ -418,10 +584,12 @@ def deliver(report, text, html, config, *, session_factory=None, voice=None, voi
                 return dict(status='duplicate_blocked', candidate_confirmed=False)
     # An independently approved voice-only delivery has its own one-shot reservation.
     # Preserve the existing text/bundle key, including its historical reservations.
-    key = digest(scope + ['voice-only-v1'] if voice_only else scope)
+    key = digest(scope + ['voice-only-v1'] if voice_only else revision_scope)
     path = root/(key+'.json')
     require(not path.is_symlink(), 'invalid_state_file')
     state = dict(version='telegram-delivery-v1', status='reserved', message_sent=False, document_sent=False,voice_sent=False)
+    if decision_revision is not None:
+        state.update(decision_revision=decision_revision,decision_signature=decision_signature)
     try:
         stream = path.open('x+',encoding='utf-8')
     except FileExistsError:
@@ -442,6 +610,9 @@ def deliver(report, text, html, config, *, session_factory=None, voice=None, voi
             with (session_factory or requests.Session)() as session:
                 session.trust_env=False
                 session.mount('https://',HTTPAdapter(max_retries=0))
+                if windows_trust_store:
+                    from .weekly_tls import configure_windows_trust
+                    configure_windows_trust(session)
                 # urllib3 debug records include request URLs, so suppress HTTP wire logs locally.
                 import logging
                 import http.client
@@ -474,7 +645,7 @@ def deliver(report, text, html, config, *, session_factory=None, voice=None, voi
     return dict(status='sent',message_sent=state['message_sent'],document_sent=html is not None,voice_sent=state['voice_sent'],voice_status='sent' if state['voice_sent'] else voice_status,candidate_confirmed=False)
 
 
-def preflight(report_path, html_path=None):
+def preflight(report_path, html_path=None, *, state_root=None):
     """Read-only checks: no HTTP, reservation creation or credential output."""
     stage = 'configuration'
     safe_codes = {
@@ -494,8 +665,7 @@ def preflight(report_path, html_path=None):
         if html_path is not None:
             prepare(report_path, html_path, secrets=secrets)
         stage = 'delivery_reservation'
-        root = STATE.resolve()
-        require(root == PROJECT.resolve()/'notification_state', 'invalid_state_root')
+        root = reservation_root(state_root)
         key = digest([report['trade_date'], report['selection_type'], delivery_schema(report),
                       report['environment'], report['market'], hashlib.sha256(config.chat_id.encode()).hexdigest()])
         path = root/(key+'.json')
@@ -516,19 +686,26 @@ def main(argv=None):
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument('--send',action='store_true',help='Actually send only after user approval')
     mode.add_argument('--check',action='store_true',help='Validate configuration/report without network or state writes')
+    parser.add_argument('--allow-readonly-report',action='store_true',help='Explicitly permit validated live readonly reports with --send')
+    parser.add_argument('--windows-trust-store',action='store_true',help='Use the existing session-scoped Windows trust adapter')
+    parser.add_argument('--state-root',type=Path,help='Existing local notification_state directory shared across deployments')
     args=parser.parse_args(argv)
+    if args.allow_readonly_report and not args.send:
+        parser.error('--allow-readonly-report requires --send')
+    if args.windows_trust_store and not args.send:
+        parser.error('--windows-trust-store requires --send')
     if args.check:
-        result = preflight(args.report, args.html)
+        result = preflight(args.report, args.html,state_root=args.state_root)
         print(json.dumps(result))
         return 0 if result['status']=='preflight_ok' else 1
     try:
         config=Configuration.from_environment() if args.send else None
-        secrets=tuple(os.environ.get(k,'') for k in ('ARVIS_TELEGRAM_BOT_TOKEN','ARVIS_TELEGRAM_CHAT_ID'))
+        secrets=(config.token,config.chat_id) if config is not None else tuple(os.environ.get(k,'') for k in ('ARVIS_TELEGRAM_BOT_TOKEN','ARVIS_TELEGRAM_CHAT_ID'))
         report,text,html=prepare(args.report,args.html,secrets=secrets)
         if not args.send:
             print(json.dumps(dict(status='dry_run',message=text,html_validated=html is not None,candidate_confirmed=False),ensure_ascii=True))
             return 0
-        result=deliver(report,text,html,config)
+        result=deliver(report,text,html,config,allow_readonly_report=args.allow_readonly_report,windows_trust_store=args.windows_trust_store,state_root=args.state_root)
         print(json.dumps(result))
         return 1 if result['status']=='failed_or_unknown' else 0
     except (ValueError,TypeError,KeyError,OSError,AttributeError,ArithmeticError):

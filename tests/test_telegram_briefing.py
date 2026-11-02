@@ -29,6 +29,7 @@ class TelegramBriefingTests(unittest.TestCase):
     def setUp(self):
         self.temp=tempfile.TemporaryDirectory();self.addCleanup(self.temp.cleanup)
         self.root=Path(self.temp.name)
+        self.enterContext(patch.dict(os.environ,{'LOCALAPPDATA':str(self.root/'profile')}))
         for name,value in [('PROJECT',self.root),('REPORTS',self.root/'reports'),('STATE',self.root/'notification_state')]:
             self.enterContext(patch.object(tg,name,value))
         tg.REPORTS.mkdir()
