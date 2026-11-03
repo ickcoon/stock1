@@ -1,0 +1,136 @@
+{
+  "synthetic": true,
+  "provenance": "Hand-written provisional contract fixture. NOT a KRX response or market evidence.",
+  "basDd": "20261102",
+  "responses": {
+    "stk_isu_base_info": {
+      "OutBlock_1": [
+        {
+          "ISU_CD": "KR7SYNTH0001",
+          "ISU_SRT_CD": "000001",
+          "ISU_NM": "\uac00\uc0c1\uc804\uc790\ubcf4\ud1b5\uc8fc",
+          "ISU_ABBRV": "\uac00\uc0c1\uc804\uc790",
+          "ISU_ENG_NM": "SYNTHETIC A",
+          "LIST_DD": "2020/01/02",
+          "MKT_TP_NM": "KOSPI",
+          "SECUGRP_NM": "\uc8fc\uad8c",
+          "SECT_TP_NM": "",
+          "KIND_STKCERT_TP_NM": "\ubcf4\ud1b5\uc8fc",
+          "PARVAL": "100",
+          "LIST_SHRS": "1000000"
+        }
+      ]
+    },
+    "ksq_isu_base_info": {
+      "OutBlock_1": [
+        {
+          "ISU_CD": "KR7SYNTH0002",
+          "ISU_SRT_CD": "0000A0",
+          "ISU_NM": "\uac00\uc0c1\ub85c\ubd07\uc6b0\uc120\uc8fc",
+          "ISU_ABBRV": "\uac00\uc0c1\ub85c\ubd07\uc6b0",
+          "ISU_ENG_NM": "SYNTHETIC B PREFERRED",
+          "LIST_DD": "2026/11/02",
+          "MKT_TP_NM": "KOSDAQ",
+          "SECUGRP_NM": "\uc8fc\uad8c",
+          "SECT_TP_NM": "",
+          "KIND_STKCERT_TP_NM": "\uc6b0\uc120\uc8fc",
+          "PARVAL": "100",
+          "LIST_SHRS": "2000000"
+        }
+      ]
+    },
+    "stk_bydd_trd": {
+      "OutBlock_1": [
+        {
+          "BAS_DD": "20261102",
+          "ISU_CD": "000001",
+          "ISU_NM": "\uac00\uc0c1\uc804\uc790",
+          "MKT_NM": "KOSPI",
+          "SECT_TP_NM": "",
+          "TDD_CLSPRC": "1050",
+          "CMPPREVDD_PRC": "50",
+          "FLUC_RT": "5.00",
+          "TDD_OPNPRC": "1000",
+          "TDD_HGPRC": "1100",
+          "TDD_LWPRC": "990",
+          "ACC_TRDVOL": "10000",
+          "ACC_TRDVAL": "10,250,000",
+          "MKTCAP": "1050000000",
+          "LIST_SHRS": "1000000"
+        }
+      ]
+    },
+    "ksq_bydd_trd": {
+      "OutBlock_1": [
+        {
+          "BAS_DD": "2026/11/02",
+          "ISU_CD": "KR7SYNTH0002",
+          "ISU_NM": "\uac00\uc0c1\ub85c\ubd07\uc6b0",
+          "MKT_NM": "KOSDAQ",
+          "SECT_TP_NM": "",
+          "TDD_CLSPRC": "2000",
+          "CMPPREVDD_PRC": "-100",
+          "FLUC_RT": "-4.76",
+          "TDD_OPNPRC": "2100",
+          "TDD_HGPRC": "2150",
+          "TDD_LWPRC": "1980",
+          "ACC_TRDVOL": "20000",
+          "ACC_TRDVAL": "41000000",
+          "MKTCAP": "4000000000",
+          "LIST_SHRS": "2000000"
+        }
+      ]
+    },
+    "krx_dd_trd": {
+      "OutBlock_1": [
+        {
+          "BAS_DD": "20261102",
+          "IDX_NM": "SYNTHETIC KRX",
+          "CLSPRC_IDX": "101.5",
+          "CMPPREVDD_IDX": "1.5",
+          "FLUC_RT": "1.50",
+          "OPNPRC_IDX": "100",
+          "HGPRC_IDX": "102",
+          "LWPRC_IDX": "99",
+          "ACC_TRDVOL": "1000",
+          "ACC_TRDVAL": "100000",
+          "MKTCAP": "1000000"
+        }
+      ]
+    },
+    "kospi_dd_trd": {
+      "OutBlock_1": [
+        {
+          "BAS_DD": "20261102",
+          "IDX_NM": "SYNTHETIC KOSPI",
+          "CLSPRC_IDX": "101.5",
+          "CMPPREVDD_IDX": "1.5",
+          "FLUC_RT": "1.50",
+          "OPNPRC_IDX": "100",
+          "HGPRC_IDX": "102",
+          "LWPRC_IDX": "99",
+          "ACC_TRDVOL": "1000",
+          "ACC_TRDVAL": "100000",
+          "MKTCAP": "1000000"
+        }
+      ]
+    },
+    "kosdaq_dd_trd": {
+      "OutBlock_1": [
+        {
+          "BAS_DD": "20261102",
+          "IDX_NM": "SYNTHETIC KOSDAQ",
+          "CLSPRC_IDX": "101.5",
+          "CMPPREVDD_IDX": "1.5",
+          "FLUC_RT": "1.50",
+          "OPNPRC_IDX": "100",
+          "HGPRC_IDX": "102",
+          "LWPRC_IDX": "99",
+          "ACC_TRDVOL": "1000",
+          "ACC_TRDVAL": "100000",
+          "MKTCAP": "1000000"
+        }
+      ]
+    }
+  }
+}

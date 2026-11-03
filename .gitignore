@@ -34,6 +34,8 @@ token.json
 tokens.json
 token_cache.json
 *_token.json
+*.dpapi
+*-real.env
 credentials.json
 
 # Standalone daily-chart live diagnostics (not operational SQLite data).

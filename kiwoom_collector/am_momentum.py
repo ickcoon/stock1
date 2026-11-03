@@ -69,12 +69,20 @@ def analyze(document, *, generated_at=None):
     cutoff = instant(document.get('selection_cutoff_at', day.isoformat()+'T09:50:00+09:00'))
     window = timing.from_document(document)
     deadline = window.deadline(cutoff) if window else cutoff
-    if cutoff.date() != day or not '09:20' <= cutoff.strftime('%H:%M') <= '09:50':
+    latest_selection = document.get('latest_selection')
+    if latest_selection and instant(latest_selection['as_of']) != cutoff:
+        raise ValueError('latest_selection_as_of_mismatch')
+    if cutoff.date() != day or not '09:20' <= cutoff.strftime('%H:%M') <= ('11:59' if latest_selection else '09:50'):
         raise ValueError('invalid_am_cutoff')
     generated = instant(generated_at or datetime.now(KST).isoformat())
     if generated < deadline:
         raise ValueError('generation_before_cutoff')
     expected = [s for s in SLOTS if instant(day.isoformat()+'T'+s+':00+09:00') <= cutoff]
+    if latest_selection:
+        chosen = latest_selection['selected']['0198']['snapshot']
+        latest_slot = instant(chosen['collection_started_at']).strftime('%H:%M') if chosen else None
+        expected = [s for s in expected if latest_slot and s <= latest_slot]
+        if latest_slot and latest_slot not in expected: expected.append(latest_slot)
     diagnostics, accepted, seen = [], [], set()
 
     def scope(item):
@@ -96,6 +104,8 @@ def analyze(document, *, generated_at=None):
         anchor = instant(day.isoformat()+'T'+slot+':00+09:00') if slot in expected else None
         valid_slot = (timing.near(window, observed, snapshot['received_at'], anchor) if window and anchor
                       else bool(anchor and observed >= anchor and observed.strftime('%H:%M') == slot))
+        if latest_selection:
+            valid_slot = slot in expected and observed.strftime('%H:%M') == slot
         if not valid_slot:
             diagnostics.append(dict(input_index=index, reason='invalid_or_late_slot'))
             continue
@@ -120,6 +130,7 @@ def analyze(document, *, generated_at=None):
     def product_allowed(code):
         return product_filter is None or product_filter.get('decisions', {}).get(code, {}).get('state') == 'analysis_candidate'
     full = len(accepted) == len(expected) and all(complete(s['stocks'], 20) for s in accepted)
+    if latest_selection: full = full and bool(accepted)
     securities = document.get('securities', {})
     for code in securities:
         if not CODE.fullmatch(code):
@@ -220,6 +231,10 @@ def analyze(document, *, generated_at=None):
                   diagnostics=diagnostics, rows=rows)
     if window:
         result.update(observation_policy=window.document(),decision_deadline_at=deadline.isoformat())
+    if latest_selection:
+        # Separate offline schema: the existing Telegram validator deliberately
+        # does not accept this collection-clock contract.
+        result.update(schema_version='c12-ag-momentum-review-v1',latest_selection=latest_selection)
     result['evaluation_reference'] = hashlib.sha256(canonical(result).encode('utf-8')).hexdigest()
     return result
 

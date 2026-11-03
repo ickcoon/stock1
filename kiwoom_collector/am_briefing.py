@@ -30,7 +30,13 @@ def latest(document, code, kind, cutoff):
                 and item.get('market') == document['market']
                 and item.get('source_kind') == document['source_kind'] and item.get('verified') is True):
             continue
-        if window and kind=='market_cap' and item.get('cache_ttl_seconds') is not None:
+        if document.get('latest_selection') and kind in ('names','change_pct','turnover','price'):
+            selection = document['latest_selection']
+            api = '0198' if kind == 'names' else '0186'
+            chosen = selection['selected'][api]
+            current = (chosen['status']=='fresh' and chosen['snapshot'] is not None
+                       and item.get('snapshot_sha256') == chosen['snapshot']['snapshot_sha256'])
+        elif window and kind=='market_cap' and item.get('cache_ttl_seconds') is not None:
             current = window.cached_capital(observed,received,cutoff,item['cache_ttl_seconds'])
         else:
             current = timing.near(window,observed,received,cutoff)
@@ -58,10 +64,11 @@ def latest(document, code, kind, cutoff):
 
 def analyze(document, *, generated_at=None):
     base = am.analyze(document, generated_at=generated_at)
-    tg.validate(base)
+    if not document.get('latest_selection'):
+        tg.validate(base)
     cutoff = am.instant(base['selection_cutoff_at'])
     window = timing.from_document(document)
-    required = base['completeness']['expected_slots'] if window else list(am.SLOTS)
+    required = base['completeness']['expected_slots'] if window or document.get('latest_selection') else list(am.SLOTS)
     full = base['completeness']['top20_complete'] and base['completeness']['accepted_slots'] == required
     candidates, groups = [], {}
     for row in base['rows']:
@@ -75,6 +82,9 @@ def analyze(document, *, generated_at=None):
         cap, turnover, change = value('market_cap'), value('turnover'), value('change_pct')
         sectors = [t['name'] for t in row['sectors']]
         missing = []
+        if document.get('latest_selection'):
+            for api, selected in document['latest_selection']['selected'].items():
+                if selected['status'] != 'fresh': missing.append(api+'_'+selected['status'])
         if not full: missing.append('incomplete_observations')
         if len(sectors) != 1: missing.append('sector_missing_or_ambiguous')
         if cap is None: missing.append('market_cap_unverified')
@@ -140,6 +150,8 @@ def analyze(document, *, generated_at=None):
                       observation_phase='preliminary' if cutoff.strftime('%H:%M')<'09:50' else 'final')
     if 'candidate_filter' in document:
         result['candidate_filter'] = document['candidate_filter']
+    if document.get('latest_selection'):
+        result['schema_version'] = 'c12-ag-sector-briefing-v1'
     result['evaluation_reference'] = hashlib.sha256(am.canonical(result).encode()).hexdigest()
     return result
 
