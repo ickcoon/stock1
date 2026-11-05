@@ -30,11 +30,25 @@ def analyze_observed_daily(pages,*,as_of,data_origin):
         bars.append(dict(trade_date=row.trade_date.isoformat(),open=row.open,high=row.high,low=row.low,
             close=row.close,volume=row.volume,page_fingerprint=page.fingerprint,row_fingerprint=row.fingerprint))
     bars.sort(key=lambda b:b['trade_date'])
+    return analyze_observed_bars(bars,stock_code=request.stock_code,environment=request.environment,
+        market=request.market,as_of=as_of,data_origin=data_origin,base_date=request.base_dt,
+        adjustment_request=request.adjustment,held_dates=held,
+        page_fingerprints=[p.fingerprint for p in pages],units_basis='ka10081_documented_fields')
+
+
+def analyze_observed_bars(bars,*,stock_code,environment,market,as_of,data_origin,
+                          base_date,adjustment_request,held_dates=(),page_fingerprints=(),units_basis):
+    """Shared provisional arithmetic after provider-specific validation, not an API parser."""
+    cutoff=timestamp(as_of);bars=list(bars);held=list(held_dates)
+    if any(b['trade_date']>=cutoff.date().isoformat() for b in bars):
+        raise ValueError('observed_future_or_incomplete_day')
+    if [b['trade_date'] for b in bars]!=sorted({b['trade_date'] for b in bars}):
+        raise ValueError('sorted_unique_observed_bars_required')
     result=dict(schema_version='arvis-observed-daily-v1',status='provisional' if bars else 'unavailable',
-        stock_code=request.stock_code,environment=request.environment,market=request.market,data_origin=data_origin,
-        as_of=cutoff.isoformat(),base_date=request.base_dt,adjustment_request=request.adjustment,
+        stock_code=stock_code,environment=environment,market=market,data_origin=data_origin,
+        as_of=cutoff.isoformat(),base_date=base_date,adjustment_request=adjustment_request,
         price_basis_verified=False,calendar_verified=False,price_unit='KRW',volume_unit='share',
-        units_basis='ka10081_documented_fields',bars_used=len(bars),held_dates=held,
+        units_basis=units_basis,bars_used=len(bars),held_dates=held,
         period=dict(start=bars[0]['trade_date'],end=bars[-1]['trade_date']) if bars else None,
         moving_averages={},trend={},supply_proxy=dict(status='unavailable',reason='insufficient_20_bars'),
         reference_close=None,unverified_reasons=['adjustment_and_corporate_actions_unverified',
@@ -71,6 +85,6 @@ def analyze_observed_daily(pages,*,as_of,data_origin):
                 overhead_resistance_possible=any(a['typical_above_observed_price'] for a in areas),
                 notice='OHLCV estimate, not remaining investor holdings or order book liquidity')
     result['chart_bars']=[{k:str(v) for k,v in bar.items()} for bar in bars[-119:]]
-    result['page_fingerprints']=[p.fingerprint for p in pages]
+    result['page_fingerprints']=list(page_fingerprints)
     result['analysis_reference']=fingerprint(result)
     return result

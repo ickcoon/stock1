@@ -48,24 +48,9 @@ def analyze_context(document, *, candidate_context=None):
         factors = dict(ma20_above_ma60=None if alignment is None else alignment == 'above',
             close_above_ma200=None if comparisons['MA200'] is None else comparisons['MA200'] == 'above')
 
-        prior = sessions[:-1][-252:]
-        missing_days = [d for d in prior if d not in bars]
-        reason = ('price_basis_unverified' if not basis_ok else 'calendar_unverified' if not calendar
-                  else 'insufficient_prior_sessions' if len(prior) < 252
-                  else 'missing_or_invalid_prior_bar' if missing_days
-                  else 'reference_close_unavailable' if close is None else None)
-        high = max(Decimal(bars[d]['high']) for d in prior) if reason is None else None
-        high52 = dict(status='available' if high is not None else 'unavailable', reason=reason,
-            definition='prior_252_completed_sessions_excluding_reference', required_prior_sessions=252,
-            usable_prior_bars=sum(d in bars for d in prior), reference_trade_date=day,
-            window_start=prior[0] if prior else None, window_end=prior[-1] if prior else None,
-            missing_trade_dates=missing_days, prior_high=str(high) if high is not None else None,
-            high_dates=[d for d in prior if Decimal(bars[d]['high']) == high] if high is not None else [],
-            distance_below_high_percent=str((high-close)/high*100) if high is not None else None,
-            rise_to_high_percent=str((high/close-1)*100) if high is not None else None,
-            close_vs_high_percent=str((close/high-1)*100) if high is not None else None,
-            close_breakout_confirmed=close > high if high is not None else None,
-            high_retest=close == high if high is not None else None)
+        high52=high52_reference(sessions,bars,close,unavailable_reason=(
+            'price_basis_unverified' if not basis_ok else 'calendar_unverified' if not calendar else None))
+        high=Decimal(high52['prior_high']) if high52['prior_high'] is not None else None
         factors['new_252_session_high'] = high52['close_breakout_confirmed']
         if high is None: missing.append('high52')
 
@@ -136,3 +121,27 @@ def analyze_context(document, *, candidate_context=None):
         notice='완료봉 기준 매매 판단 보조. OHLCV 매물대는 추정이며 실제 매도 잔량이 아닙니다.')
     result['context_reference'] = fingerprint(result)
     return result
+
+
+def high52_reference(sessions,bars,close,*,unavailable_reason=None):
+    """Existing 252-session high arithmetic; caller supplies its validation gate."""
+    with localcontext() as precision:
+        precision.prec=50
+        prior = sessions[:-1][-252:]
+        missing_days = [d for d in prior if d not in bars]
+        reason = (unavailable_reason or ('insufficient_prior_sessions' if len(prior) < 252
+                  else 'missing_or_invalid_prior_bar' if missing_days
+                  else 'reference_close_unavailable' if close is None else None))
+        high = max(Decimal(bars[d]['high']) for d in prior) if reason is None else None
+        high52 = dict(status='available' if high is not None else 'unavailable', reason=reason,
+            definition='prior_252_completed_sessions_excluding_reference', required_prior_sessions=252,
+            usable_prior_bars=sum(d in bars for d in prior), reference_trade_date=sessions[-1] if sessions else None,
+            window_start=prior[0] if prior else None, window_end=prior[-1] if prior else None,
+            missing_trade_dates=missing_days, prior_high=str(high) if high is not None else None,
+            high_dates=[d for d in prior if Decimal(bars[d]['high']) == high] if high is not None else [],
+            distance_below_high_percent=str((high-close)/high*100) if high is not None else None,
+            rise_to_high_percent=str((high/close-1)*100) if high is not None else None,
+            close_vs_high_percent=str((close/high-1)*100) if high is not None else None,
+            close_breakout_confirmed=close > high if high is not None else None,
+            high_retest=close == high if high is not None else None)
+        return high52

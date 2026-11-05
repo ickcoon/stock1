@@ -1,0 +1,4 @@
+# Standalone KRX incremental process; no Collector execution dependencies.
+requests==2.32.5
+python-dotenv==1.2.1
+truststore==0.10.5

@@ -48,3 +48,7 @@ credentials.json
 # Protected local token caches must never be release artifacts.
 *.token-cache.bin
 /token-cache/
+
+# Hospital development credential artifacts.
+*.dpapi
+*-real.env

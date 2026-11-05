@@ -82,6 +82,15 @@ def chart_card(report,*,stock_name=None,observed_daily=None,mini_chart_output=No
         result['daily_trend']=deepcopy(observed['trend'])
         result['provenance']['observed_daily']=deepcopy(observed)
         quote=observed.get('reference_close')
+        observed_high=observed.get('high52',{})
+        if high['status']=='unavailable' and observed_high.get('status')=='provisional':
+            from .hybrid import high52_distance_band
+            distance=observed_high.get('close_vs_high_percent')
+            high.update(status='provisional',value=observed_high['prior_high'],
+                provisional=deepcopy(observed_high),distance_status='provisional',
+                price_vs_high_percent=distance,comparison_price=deepcopy(quote),
+                distance_band=high52_distance_band(Decimal(distance)) if distance is not None else None,
+                comparison_basis='provider_observed_252_session_high_price_adjustment_unverified')
         if (high['status']=='provisional' and quote and provisional.get('adjustment_request')==observed.get('adjustment_request')):
             from .hybrid import high52_distance_band
             with localcontext() as arithmetic:
