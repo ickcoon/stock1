@@ -12,7 +12,7 @@ import os
 from pathlib import Path
 import re
 
-from dotenv import dotenv_values
+from .environment_file import values as credential_values
 import requests
 
 from .daily_chart import day,fingerprint
@@ -54,15 +54,7 @@ class Credential:
 
 
 def credential(*,env_file=None):
-    if env_file is None:value=os.environ.get('KRX_AUTH_KEY','')
-    else:
-        path=Path(env_file).resolve()
-        private = PROJECT.parent / (PROJECT.name+'-private') / '.env.krx.local'
-        if (path.name!='.env.krx.local' or
-                not (path.is_relative_to(PROJECT) or path == private.absolute())):
-            raise KrxError('ignored_development_krx_env_file_required')
-        if not path.is_file():return None
-        value=dotenv_values(path,encoding='utf-8-sig',interpolate=False).get('KRX_AUTH_KEY','')
+    value=credential_values(env_file).get('KRX_AUTH_KEY','')
     if not isinstance(value,str) or not value.strip():return None
     value=value.strip()
     if any(c in value for c in ('\r','\n','${')):raise KrxError('invalid_krx_key')
@@ -79,7 +71,7 @@ def preflight(*,env_file=None,review=None):
     return dict(stage='C12-AN',key_present=key is not None,services=services,actual_api_calls=0,
         official_portal_account_status='not_independently_verified',credential_values_exported=False,
         source_kind='local_preflight',daily_database_rows=0,adr20_implemented=False,
-        setup=None if key else 'Set KRX_AUTH_KEY locally or use --env-file pointing to a development .env.krx.local file. Never paste the key into chat.')
+        setup=None if key else 'Set KRX_AUTH_KEY in the deployment credential file. Never paste the key into chat.')
 
 
 def decimal_value(value):
@@ -308,7 +300,7 @@ def main(argv=None):
         print(json.dumps(check,ensure_ascii=False,indent=2));return 0
     key=credential(env_file=a.env_file)
     if key is None:
-        check.update(status='not_executed_key_missing',setup='Set KRX_AUTH_KEY locally, or use --env-file with a development .env.krx.local file. Never paste the key into chat.')
+        check.update(status='not_executed_key_missing',setup='Set KRX_AUTH_KEY in the deployment credential file. Never paste the key into chat.')
         print(json.dumps(check,ensure_ascii=False,indent=2));return 0
     if not a.bas_dd or not a.output_dir:raise KrxError('probe_date_and_development_output_required')
     out=Path(os.path.abspath(a.output_dir))

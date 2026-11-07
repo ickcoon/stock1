@@ -1,0 +1,8 @@
+{
+  "policy_status": "initial_hypothesis",
+  "minimum_companions": 2,
+  "strong_rank_max": 3,
+  "minimum_comparable_points": 2,
+  "strength_epsilon": "0",
+  "required_previous_sector_coverage": "1"
+}

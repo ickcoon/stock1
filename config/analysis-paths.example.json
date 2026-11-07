@@ -1,0 +1,7 @@
+{
+  "analysis_daily_db": "diagnostics/local/daily.db",
+  "analysis_adr_db": "diagnostics/local/adr.db",
+  "theme_master_db": "diagnostics/local/theme-master.sqlite",
+  "collection_daily_db": "diagnostics/local/collection-daily.db",
+  "collection_checkpoint": "diagnostics/local/progress.db"
+}

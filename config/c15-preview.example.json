@@ -1,0 +1,12 @@
+{
+  "runtime_root": ".",
+  "ranking_relative": "data/stock1-real.db",
+  "turnover_relative": "data/turnover",
+  "analysis_paths": "config/analysis-paths.json",
+  "eligibility_master_db": null,
+  "unit_evidence": null,
+  "identity_validation": true,
+  "identity_checkpoint": "diagnostics/local/progress.db",
+  "turnover_fallback": true,
+  "turnover_fallback_max_age_seconds": 600
+}

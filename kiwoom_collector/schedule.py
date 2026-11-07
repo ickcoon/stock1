@@ -15,7 +15,7 @@ from .scheduled_quotes import run_scheduled_quotes, QuotePolicy
 SLOTS = ('09:20', '09:30', '09:40', '09:50', '10:00', '11:00', '12:00', '13:00', '14:00', '15:00')
 C12X_SLOTS = tuple(f'09:{minute:02d}' for minute in range(10,60,5)) + tuple(
     f'{minute//60:02d}:{minute%60:02d}' for minute in range(600,961,30))
-TURNOVER_SLOTS = ('09:40','09:50','10:00','11:00','14:00','14:30','15:00','15:30')
+TURNOVER_SLOTS = ('09:40','09:45','09:50','10:00','11:00','14:00','14:30','15:00','15:30')
 AM_DECISION_SLOTS = ('09:40','09:45','09:50')
 PM_REVIEW_SLOTS = ('14:30','15:00')
 LOG = logging.getLogger(__name__)

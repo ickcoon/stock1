@@ -1,0 +1,9 @@
+{
+  "capital_currency": "KRW",
+  "capital_validation": "positive_saved_MKTCAP_exactly_equals_KRW_close_times_listed_shares",
+  "price_unit_source": "https://global.krx.co.kr/contents/GLB/06/0602/0602010201/GLB0602010201T3.jsp",
+  "capital_formula_source": "https://global.krx.co.kr/contents/GLB/03/0305/0305010000/GLB0305010000.jsp",
+  "api_MKTCAP_unit_explicitly_documented": false,
+  "checked_on": "2026-11-05",
+  "capital_usage": "latest_available_prior_close_reference_not_intraday_cap_confirmation"
+}

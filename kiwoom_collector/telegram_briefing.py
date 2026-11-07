@@ -1,4 +1,5 @@
 """Independent, opt-in Telegram briefing. No operational DB or scheduler access."""
+from .environment_file import values as credential_values
 import argparse
 from collections import Counter
 from dataclasses import dataclass, field
@@ -119,6 +120,12 @@ def digest(value):
 
 def validate(report, secrets=()):
     scan(report, secrets)
+    if isinstance(report,dict) and report.get('schema_version')=='c15-afternoon-reference-v1':
+        from .c15_delivery import validate_pm
+        return validate_pm(report)
+    if isinstance(report,dict) and report.get("schema_version")=="c15-morning-delivery-v1":
+        from . import c15_delivery
+        return c15_delivery.validate(report)
     if isinstance(report, dict) and report.get('schema_version') == OBSERVATION_SCHEMA:
         validate_observation(report)
         return report
@@ -315,6 +322,12 @@ def observation_summary(report):
 
 
 def summary(report, *, attached=False):
+    if report.get('schema_version')=='c15-afternoon-reference-v1':
+        from .c15_delivery import pm_summary
+        return pm_summary(report)
+    if report.get("schema_version")=="c15-morning-delivery-v1":
+        validate(report)
+        return report["briefing"]["text"]
     if report.get('schema_version') == OBSERVATION_SCHEMA:
         return observation_summary(report)
     if report.get('schema_version') == 'am-sector-briefing-v1':
@@ -362,9 +375,11 @@ def render_report(report):
 
 
 def delivery_schema(report):
+    if report['schema_version']=='c15-afternoon-reference-v1':
+        return report['schema_version']+':'+report['selection_cutoff_at'][11:16]
     # Keep the pre-existing day/recipient reservation namespace across formats.
     # An old reserved, failed or sent briefing must still block a second send.
-    return am.SCHEMA if report['schema_version'] == 'am-sector-briefing-v1' else report['schema_version']
+    return am.SCHEMA if report['schema_version'] in ('am-sector-briefing-v1','c15-morning-delivery-v1') else report['schema_version']
 
 
 def read_report(path, suffix, limit):
@@ -428,24 +443,11 @@ class Configuration:
 
     @classmethod
     def from_environment(cls):
-        token = os.environ.get('ARVIS_TELEGRAM_BOT_TOKEN','').strip()
-        chat = os.environ.get('ARVIS_TELEGRAM_CHAT_ID','').strip()
-        allowed = tuple(v.strip() for v in os.environ.get('ARVIS_TELEGRAM_ALLOWED_CHAT_IDS','').split(',') if v.strip())
-        if not any((token,chat,allowed)) and os.environ.get('LOCALAPPDATA'):
-            path=cls.protected_path()
-            if path.exists():
-                try:
-                    from .token_cache import WindowsDPAPI
-                    require(not path.is_symlink() and path.parent.resolve()==path.parent.absolute()
-                            and path.stat().st_size<=65536)
-                    data=json.loads(WindowsDPAPI().unprotect(path.read_bytes()).decode('utf-8'),object_pairs_hook=unique_object)
-                    keys(data,{'version','kind','token','chat_id','allowed'})
-                    require(data['version']==1 and data['kind']=='arvis-telegram-config-v1')
-                    token=data['token'].strip();chat=data['chat_id'].strip()
-                    require(isinstance(data['allowed'],list))
-                    allowed=tuple(v.strip() for v in data['allowed'])
-                except Exception:
-                    raise BriefingError('secure_configuration_unreadable') from None
+        settings = credential_values()
+        token = settings.get('ARVIS_TELEGRAM_BOT_TOKEN','').strip()
+        chat = settings.get('ARVIS_TELEGRAM_CHAT_ID','').strip()
+        allowed = tuple(v.strip() for v in settings.get('ARVIS_TELEGRAM_ALLOWED_CHAT_IDS','').split(',') if v.strip())
+        if not allowed:allowed = (chat,)
         require(bool(TOKEN.fullmatch(token)), 'configuration_required')
         require(bool(CHAT.fullmatch(chat)) and bool(allowed) and all(CHAT.fullmatch(v) for v in allowed), 'private_chat_allowlist_required')
         require(chat in allowed, 'recipient_not_allowed')
@@ -552,6 +554,12 @@ def deliver(report, text, html, config, *, session_factory=None, voice=None, voi
     root.mkdir(exist_ok=True)
     scope = [report['trade_date'], report['selection_type'], delivery_schema(report), report['environment'],
              report['market'], hashlib.sha256(config.chat_id.encode()).hexdigest()]
+    if report['schema_version']=='c15-morning-delivery-v1':
+        require(html is None and voice is None and not voice_only and decision_revision is None,'invalid_c15_media')
+        legacy=root/(digest(scope)+'.json')
+        require(not legacy.is_symlink(),'invalid_state_file')
+        if legacy.exists():return dict(status='duplicate_blocked',candidate_confirmed=False)
+        scope=scope+['c15-slot',am.instant(report['selection_cutoff_at']).strftime('%H:%M')]
     decision_signature=None
     revision_scope=scope
     if decision_revision is not None:
@@ -671,6 +679,9 @@ def preflight(report_path, html_path=None, *, state_root=None):
         key = digest([report['trade_date'], report['selection_type'], delivery_schema(report),
                       report['environment'], report['market'], hashlib.sha256(config.chat_id.encode()).hexdigest()])
         path = root/(key+'.json')
+        if report['schema_version']=='c15-morning-delivery-v1' and not path.exists():
+            scope=[report['trade_date'],report['selection_type'],delivery_schema(report),report['environment'],report['market'],hashlib.sha256(config.chat_id.encode()).hexdigest()]
+            path=root/(digest(scope+['c15-slot',am.instant(report['selection_cutoff_at']).strftime('%H:%M')])+'.json')
         require(not path.is_symlink(), 'invalid_state_file')
         return dict(status='duplicate_blocked' if path.exists() else 'preflight_ok',
                     configuration_valid=True, json_validated=True,

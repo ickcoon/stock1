@@ -31,7 +31,7 @@ class C12XTests(unittest.TestCase):
     def setUp(self):self.enterContext(patch('socket.socket.connect',side_effect=AssertionError('network forbidden')))
 
     def test_exact_23_and_8_slots_no_observation_after_1600(self):
-        self.assertEqual(len(schedule.C12X_SLOTS),23);self.assertEqual(len(schedule.TURNOVER_SLOTS),8)
+        self.assertEqual(len(schedule.C12X_SLOTS),23);self.assertEqual(len(schedule.TURNOVER_SLOTS),9)
         self.assertEqual(schedule.C12X_SLOTS[:10],tuple(f'09:{m:02}' for m in range(10,60,5)))
         self.assertEqual(schedule.C12X_SLOTS[-1],'16:00')
         self.assertTrue(set(schedule.TURNOVER_SLOTS)<=set(schedule.C12X_SLOTS))
@@ -55,14 +55,14 @@ class C12XTests(unittest.TestCase):
                 with self.assertRaises(KeyboardInterrupt):
                     schedule.collect_schedule(client,store,'real',now=lambda:clock[0],sleep=sleep,
                         slots=schedule.C12X_SLOTS,after_slot=workflow)
-                self.assertEqual(client.fetch_once.call_count,23);self.assertEqual(turnover.call_count,8)
+                self.assertEqual(client.fetch_once.call_count,23);self.assertEqual(turnover.call_count,9)
                 self.assertTrue(all(call.args[-1]==3 for call in turnover.call_args_list))
                 self.assertEqual(workflow.review.call_count,5);workflow.close_day.assert_called_once()
                 clock[0]=schedule.slot_at(DAY,'09:40')
                 with self.assertRaises(KeyboardInterrupt):
                     schedule.collect_schedule(client,store,'real',now=lambda:clock[0],sleep=Mock(side_effect=KeyboardInterrupt()),
                         slots=schedule.C12X_SLOTS,after_slot=workflow)
-                self.assertEqual(turnover.call_count,8);self.assertEqual(client.fetch_once.call_count,23)
+                self.assertEqual(turnover.call_count,9);self.assertEqual(client.fetch_once.call_count,23)
 
     def test_hook_failure_preserves_ranking_and_skips_late_backfill(self):
         with tempfile.TemporaryDirectory() as folder, closing(Store(Path(folder)/'real.db')) as store:

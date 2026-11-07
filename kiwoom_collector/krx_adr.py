@@ -184,9 +184,14 @@ def calendar(source_db, checkpoint, start, end):
     return expected, empty
 
 
-def build(source, checkpoint, output, *, incremental=False):
+def build(source, checkpoint, output, *, incremental=False, lightweight=False):
     source, checkpoint, output = map(lambda p:Path(p).absolute(),(source,checkpoint,output))
     expected_source = daily.ROOT/'as-incremental.db' if incremental else SOURCE
+    if lightweight:
+        if (not source.parent.name.startswith('lightweight-') or source.name!='daily-120.db'
+                or source.parent.parent != (daily.master.PROJECT/'diagnostics').absolute()):
+            raise ValueError('owned_lightweight_daily_source_required')
+        expected_source = source
     expected_checkpoint = daily.master.PROJECT/'diagnostics/krx-as/progress.db' if incremental else CHECKPOINT
     if (source != expected_source.absolute() or checkpoint != expected_checkpoint.absolute() or
         source.resolve()!=source or checkpoint.resolve()!=checkpoint or
@@ -205,19 +210,20 @@ def build(source, checkpoint, output, *, incremental=False):
         duplicates = db.execute('SELECT COUNT(*) FROM (SELECT day,market,official_code_raw FROM daily_latest GROUP BY 1,2,3 HAVING COUNT(*)>1)').fetchone()[0]
         if integrity!=['ok'] or foreign or duplicates:
             raise ValueError('source_integrity_gate_failed')
-        bounds = db.execute('SELECT min(day),max(day) FROM daily_latest').fetchone()
+        view = 'adr_source_latest' if lightweight else 'daily_latest'
+        bounds = db.execute(f'SELECT min(day),max(day) FROM {view}').fetchone()
         if incremental and not bounds[0]:
             raise ValueError('nonempty_incremental_source_required')
-        start, end = tuple(bounds) if incremental else ('2025-10-01','2026-10-30')
+        start, end = tuple(bounds) if incremental or lightweight else ('2025-10-01','2026-10-30')
         days, empties = calendar(db,checkpoint,start,end)
         coverage = [dict(r) for r in db.execute('''SELECT d.day,d.market,
             (SELECT COUNT(*) FROM raw_rows WHERE snapshot_id=d.current_snapshot) AS expected_rows,
             (SELECT COUNT(*) FROM bars WHERE snapshot_id=d.current_snapshot) AS actual_rows,
             (SELECT COUNT(*) FROM raw_rows WHERE snapshot_id=d.current_snapshot AND error IS NOT NULL) AS invalid_rows
-            FROM market_days d WHERE d.current_snapshot IS NOT NULL''')]
+            FROM market_days d WHERE d.current_snapshot IS NOT NULL AND d.day BETWEEN ? AND ?''',(start,end))]
         available = {(r['day'],r['market']) for r in coverage
                      if r['expected_rows']>0 and r['expected_rows']==r['actual_rows'] and not r['invalid_rows']}
-        groups, anomalies = aggregate(db.execute('SELECT * FROM daily_latest ORDER BY day,market,official_code_raw'),days,available)
+        groups, anomalies = aggregate(db.execute(f'SELECT * FROM {view} ORDER BY day,market,official_code_raw'),days,available)
     series = []
     for universe in UNIVERSES:
         for market in MARKETS:
@@ -274,8 +280,14 @@ def build(source, checkpoint, output, *, incremental=False):
 def main():
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('--output',type=Path,required=True)
+    p.add_argument('--source',type=Path)
+    p.add_argument('--incremental',action='store_true')
+    p.add_argument('--lightweight',action='store_true')
     args=p.parse_args()
-    result=build(SOURCE,CHECKPOINT,args.output)
+    incremental=args.incremental or args.lightweight
+    checkpoint=daily.master.PROJECT/'diagnostics/krx-as/progress.db' if incremental else CHECKPOINT
+    source=args.source or (daily.ROOT/'as-incremental.db' if incremental else SOURCE)
+    result=build(source,checkpoint,args.output,incremental=incremental,lightweight=args.lightweight)
     print(json.dumps({k:result['report'][k] for k in ('expected_sessions','complete_sessions','records','valid_range','valid_sessions','missing_dates','reference_mismatches','source_unchanged')}))
 
 

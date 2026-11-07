@@ -52,3 +52,11 @@ credentials.json
 # Hospital development credential artifacts.
 *.dpapi
 *-real.env
+
+# Environment-specific credentials beside deployment roots.
+stock1-*.env
+
+# Machine-local analysis paths; tracked examples contain portable placeholders.
+/config/analysis-paths.json
+/config/c15-preview.json
+/config/c16-news-reference.json

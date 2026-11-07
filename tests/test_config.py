@@ -25,12 +25,12 @@ class ConfigTests(unittest.TestCase):
                 with self.assertRaisesRegex(ValueError, "KIWOOM_APP_KEY, KIWOOM_SECRET_KEY"):
                     load_credentials(Path(directory) / "absent")
 
-    def test_preserves_existing_binding(self):
+    def test_file_overrides_existing_binding(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / ".env"
             path.write_text("KIWOOM_APP_KEY=file-key\nKIWOOM_SECRET_KEY=file-secret\n", encoding="utf-8")
             with patch.dict(os.environ, {"KIWOOM_APP_KEY": "existing-key"}, clear=True):
-                self.assertEqual(load_credentials(path).app_key, "existing-key")
+                self.assertEqual(load_credentials(path).app_key, "file-key")
 
     def test_environment_from_dotenv_and_safe_default(self):
         for setting, expected in (("", "mock"), ("KIWOOM_ENV=mock\n", "mock"), ("KIWOOM_ENV=real\n", "real")):
@@ -44,18 +44,20 @@ class ConfigTests(unittest.TestCase):
 
     def test_invalid_environment_never_echoes_value(self):
         for value in ("", "prod", "MOCK", "https://example.com", "test-secret"):
-            with patch.dict(os.environ, {"KIWOOM_ENV": value}, clear=True):
+            with tempfile.TemporaryDirectory() as directory:
+                path = Path(directory) / '.env'
+                path.write_text('KIWOOM_ENV=' + value + '\n', encoding='utf-8')
                 with self.assertRaises(ValueError) as caught:
-                    load_credentials(Path("/nonexistent/test.env"))
+                    load_credentials(path)
                 self.assertIn("KIWOOM_ENV", str(caught.exception))
                 self.assertNotIn("test-secret", str(caught.exception))
 
-    def test_environment_binding_takes_precedence(self):
+    def test_file_environment_takes_precedence(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / ".env"
             path.write_text("KIWOOM_ENV=real\nKIWOOM_APP_KEY=x\nKIWOOM_SECRET_KEY=y\n", encoding="utf-8")
             with patch.dict(os.environ, {"KIWOOM_ENV": "mock"}, clear=True):
-                self.assertEqual(load_credentials(path).environment, "mock")
+                self.assertEqual(load_credentials(path).environment, "real")
 
     def test_direct_client_settings_reject_arbitrary_host(self):
         with self.assertRaisesRegex(ValueError, "KIWOOM_ENV"):

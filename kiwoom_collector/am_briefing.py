@@ -228,7 +228,7 @@ def format_telegram(report):
             else:
                 turnover_text = '미확인'
             name = candidate['name'] or ('종목명 미확인 ' + candidate['stock_code'])
-            lines.append(f'{index}등 {name}, {change_text}, 누적 거래대금 {turnover_text}.')
+            lines.append(f"{index}등 {name}, {change_text}, 누적 거래대금 {turnover_text}, 조회 {candidate['latest_rank']}위.")
         if len(sector['leaders']) < 3:
             lines.append('추가 후보는 근거 부족으로 보류합니다.')
     if 0 < len(report['sectors']) < 3:
@@ -255,7 +255,7 @@ def format_mobile(report):
             change = Decimal(candidate['metrics']['change_pct']['value'])
             amount = Decimal(candidate['metrics']['turnover']['value']) / EOK
             name = candidate['name'] or candidate['stock_code']
-            lines.append(f"  {index}) {name} {change:+g}% / {amount:,.0f}억")
+            lines.append(f"  {index}) {name} {change:+g}% / {amount:,.0f}억 / 조회 {candidate['latest_rank']}위")
     if not report['sectors']:
         lines.append('선정 보류: 검증된 섹터 동반상승 근거 부족')
     elif len(report['sectors']) < 3:

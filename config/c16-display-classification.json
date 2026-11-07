@@ -1,0 +1,18 @@
+{
+  "minimum_anchor_members": 2,
+  "minimum_independent_theme_members": 2,
+  "corporate_label_suffix": "그룹",
+  "industry_anchor_labels": ["자동차", "은행", "제약바이오", "신재생에너지", "반도체/MLCC"],
+  "display_labels": {"현대차그룹": "현대차그룹/자동차"},
+  "external_catalyst_notes": [
+    {
+      "date": "2026-11-05",
+      "observed_sector": "현대차그룹/자동차",
+      "description": "미국 민주당 중간선거 승리 및 자동차 관세 완화 기대",
+      "source": "사용자 제공 외부 보도 요약; 원문 URL 미제공",
+      "status": "외부 보도 요약 참고 / 원문 미확인 / 시스템 자동 검증 아님",
+      "verified": false,
+      "used_for_classification_or_score": false
+    }
+  ]
+}

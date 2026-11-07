@@ -29,6 +29,10 @@ class Workflow:
         slot=due.strftime('%H:%M');day=due.date().isoformat()
         turn_dir=self.root/'data/turnover'/day
         ledger=dict(day=day,slot=slot,ranking_result=result,collection_id=identifier,environment='real')
+        observation_id='real:'+due.isoformat()
+        ledger['observation_id']=observation_id
+        ledger['sources']={'0198':dict(observation_id=observation_id,
+            database=str(store.path.resolve()),collection_id=identifier)}
         if slot in schedule.TURNOVER_SLOTS:
             turn_dir.mkdir(parents=True,exist_ok=True)
             path=turn_dir/(slot.replace(':','')+'.db')
@@ -42,12 +46,21 @@ class Workflow:
                     transport._last_request=client._last_request
                     transport.request_interval=max(1.2,client.request_interval)
                     ledger['turnover']=collect_turnover(path,transport,Profile('000','0','1'),'real',self.settings.get('turnover_max_pages',1))
+                except Exception as error:
+                    ledger['turnover']=dict(status='failed',error_type=type(error).__name__)
                 finally:
                     if transport._last_request is not None:client._last_request=transport._last_request
                     transport.close()
+            ledger['sources']['0186']=dict(observation_id=observation_id,
+                database=str(path),run_id=ledger['turnover'].get('run_id'),
+                status=ledger['turnover']['status'])
         try:
             if slot in (*schedule.AM_DECISION_SLOTS,*schedule.PM_REVIEW_SLOTS):
                 turns=sorted(p for p in turn_dir.glob('*.db') if p.stem<=slot.replace(':',''))
+                if slot in schedule.AM_DECISION_SLOTS:
+                    # A previous slot cannot stand in for this morning pair.
+                    current=turn_dir/(slot.replace(':','')+'.db')
+                    turns=[current] if current.is_file() else []
                 ledger['review']=self.review(store,due,turns[-1] if turns else None)
             if slot=='16:00':ledger['retention']=self.close_day(store,due)
         except Exception as error:
@@ -65,6 +78,10 @@ class Workflow:
         generated=self.clock().isoformat()
         folder=self.root/'reports'/('c12x-'+due.strftime('%Y%m%d-%H%M'))
         folder.mkdir(parents=True,exist_ok=False)
+        if slot in schedule.PM_REVIEW_SLOTS:
+            if turnover_path is None:return dict(status='held',reason='pm_turnover_missing',delivery=dict(status='not_generated'))
+            from .c15_delivery import process_pm
+            return process_pm(self,due,ranking_path=snapshot,turnover_path=turnover_path,folder=folder)
         cutoff=due.replace(hour=9,minute=50)
         master=self.settings.get('master_db')
         evidence_path=self.settings.get('verification_manifest')
@@ -121,6 +138,9 @@ class Workflow:
         return step6,chart,run,turn
 
     def morning_review(self,store,due,turnover_path):
+        if self.settings.get("c15_briefing_enabled") is True:
+            from . import c15_delivery
+            return c15_delivery.process(self,due)
         from . import morning_briefing
         # Never recapture/reconstruct an already frozen phase on restart.
         frozen=self.root/'reports'/('c12ac-'+due.strftime('%Y%m%d-%H%M'))/'telegram.json'

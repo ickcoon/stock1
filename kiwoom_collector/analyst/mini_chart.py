@@ -145,11 +145,26 @@ def render_png(series,card,path):
                         bbox=dict(facecolor='white',edgecolor='none',alpha=.8,pad=1.5))
             else:
                 price.axhline(value,color='#6b7280',linestyle='--',linewidth=.7,alpha=.4,label=f'Recent high {value:,.0f}')
+            support=series.get('support_zone')
+            nearest=series.get('nearest_resistance_candidate')
+            if nearest:
+                price.axhline(float(nearest['value']),color='#9866c5',linestyle=':',linewidth=1,label='Nearest overhead candidate '+format(float(nearest['value']),',.0f'))
+            if support:
+                price.axhspan(float(support['low']),float(support['high']),color='#23a889',alpha=.18,zorder=0,label='Daily pivot support estimate')
+                price.annotate('Support '+format(float(support['low']),',.0f'),xy=(.995,float(support['low'])),xycoords=('axes fraction','data'),ha='right',va='top',fontsize=8,color='#14765e')
+            if zone.get('bull'):
+                price.text(.99,.98,zone['bull']['trade_date']+' bull close / '+zone['bear']['trade_date']+' bear wick',transform=price.transAxes,ha='right',va='top',fontsize=8)
+            if support:
+                price.text(.99,.92,'Support pivot '+support['trade_date'],transform=price.transAxes,ha='right',va='top',fontsize=8,color='#14765e')
             price.scatter([len(bars)-1],[float(series['latest_close'])],color='#111827',s=18,zorder=5)
+            peak=max(range(len(bars)),key=lambda i:float(bars[i]['high']))
+            price.scatter([peak],[float(bars[peak]['high'])],color='#6b7280',s=14,zorder=5)
+            price.annotate('60-bar high '+format(float(bars[peak]['high']),',.0f')+' / '+bars[peak]['trade_date'],
+                xy=(peak,float(bars[peak]['high'])),xytext=(0,7),textcoords='offset points',fontsize=7,color='#4b5563')
             name=card.get('stock_name') or ''
             zone_title='Structural candidate' if zone.get('source')=='bull_close_next_observed_bear_upper_wick' else 'Calculated zone' if zone['status']!='unavailable' else 'Recent high'
             price.set_title(f"{card['stock_code']} {name} | {series['latest_date']} | Close {float(series['latest_close']):,.0f} KRW | {zone_title}",loc='left',fontsize=11,pad=12)
-            price.text(.01,.02,f"{series['analysis_status']} | adjustment request={series['adjustment_request']} | saved data, not live",transform=price.transAxes,fontsize=8,color='#6b7280')
+            price.text(.01,.02,f"{series['analysis_status']} | adjustment request={series['adjustment_request']} | saved data, not live; OHLCV zones, NOT volume-at-price",transform=price.transAxes,fontsize=8,color='#6b7280')
             price.legend(loc='upper left',fontsize=8,ncol=2,frameon=False)
             price.yaxis.set_major_formatter(StrMethodFormatter('{x:,.0f}'));price.set_ylabel('KRW')
             volume.set_ylabel('Vol (M)');volume.yaxis.set_major_locator(MaxNLocator(3))

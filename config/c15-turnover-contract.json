@@ -1,0 +1,15 @@
+{
+  "api_id": "ka10032",
+  "list_field": "trde_prica_upper",
+  "amount_field": "trde_prica",
+  "official_description": "단위: 백만원",
+  "unit": "million_KRW",
+  "multiplier_to_won": "1000000",
+  "official_source": "https://raw.githubusercontent.com/Kiwoom-Securities/Kiwoom-REST-API/953e5dbff123f437ab4d11a78a95191a685eb51f/kiwoom/_data/kiwoom_api_spec.json",
+  "current_source_checked": "https://raw.githubusercontent.com/Kiwoom-Securities/Kiwoom-REST-API/main/kiwoom/_data/kiwoom_api_spec.json",
+  "checked_on": "2026-11-05",
+  "hts_unit_reported_by_user": "million_KRW",
+  "hts_rest_same_snapshot_comparison_available": false,
+  "runtime_unit_verified": false,
+  "cumulative_period_verified": false
+}
